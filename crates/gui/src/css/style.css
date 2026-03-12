@@ -1,0 +1,76 @@
+/* GoshApps Downloader GTK4 Theme */
+
+/* Sidebar: subtle background differentiation */
+.sidebar {
+    background-color: alpha(@window_bg_color, 0.95);
+    border-right: 1px solid alpha(@borders, 0.3);
+}
+
+/* Badge: small rounded pill for notification counts */
+.badge {
+    background: @accent_bg_color;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: bold;
+    min-height: 0;
+    min-width: 0;
+}
+
+/* Card: margin around libadwaita cards */
+.card {
+    margin: 6px;
+}
+
+/* Bold text for unread notifications */
+.bold {
+    font-weight: bold;
+}
+
+/* Progress bar: active downloads use accent color */
+progressbar.active > trough > progress {
+    background-color: @accent_bg_color;
+}
+
+/* Progress bar: paused downloads use dim color */
+progressbar.paused > trough > progress {
+    background-color: alpha(@window_fg_color, 0.3);
+}
+
+/* Download card status colors */
+.download-status-active {
+    color: @accent_fg_color;
+    background-color: alpha(@accent_bg_color, 0.15);
+    border-left: 3px solid @accent_bg_color;
+}
+
+.download-status-paused {
+    color: @warning_color;
+    background-color: alpha(@warning_color, 0.1);
+    border-left: 3px solid @warning_color;
+}
+
+.download-status-error {
+    color: @error_color;
+    background-color: alpha(@error_color, 0.1);
+    border-left: 3px solid @error_color;
+}
+
+.download-status-complete {
+    color: @success_color;
+    background-color: alpha(@success_color, 0.1);
+    border-left: 3px solid @success_color;
+}
+
+/* Status bar: subtle top border */
+.status-bar {
+    border-top: 1px solid alpha(@borders, 0.5);
+    padding: 4px 8px;
+}
+
+/* Search entry in toolbar: constrained width */
+.toolbar searchentry,
+searchentry.toolbar-search {
+    min-width: 200px;
+}

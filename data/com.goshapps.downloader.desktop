@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Goshapps Downloader
+Comment=A fast, modern download manager powered by Rust
+Exec=gosh-fetch %U
+Icon=com.goshapps.downloader
+Terminal=false
+Type=Application
+Categories=Network;FileTransfer;
+Keywords=download;torrent;magnet;
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;
+StartupNotify=true
+StartupWMClass=com.goshapps.downloader

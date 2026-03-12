@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.goshapps.downloader</id>
+
+  <name>Goshapps Downloader</name>
+  <summary>A fast, modern download manager powered by Rust</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0</project_license>
+
+  <description>
+    <p>
+      Goshapps Downloader is a fast, modern download manager built with Rust and GTK4.
+      It supports HTTP/HTTPS downloads, BitTorrent protocol, and magnet links, giving you
+      full control over your files.
+    </p>
+    <p>
+      Your privacy matters. Goshapps Downloader includes no telemetry and operates entirely
+      local-only — your download activity stays on your machine and is never sent anywhere.
+    </p>
+  </description>
+
+  <url type="homepage">https://github.com/goshitsarch-eng/Gosh-Fetch</url>
+  <url type="bugtracker">https://github.com/goshitsarch-eng/Gosh-Fetch/issues</url>
+
+  <launchable type="desktop-id">com.goshapps.downloader.desktop</launchable>
+
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+  </categories>
+
+  <provides>
+    <binary>gosh-fetch</binary>
+  </provides>
+
+  <releases>
+    <release version="3.0.0" date="2026-03-11">
+      <description>
+        <p>Initial release of Goshapps Downloader.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1" />
+</component>
