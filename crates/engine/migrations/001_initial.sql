@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS tracker_meta (
 CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads(created_at);
 CREATE INDEX IF NOT EXISTS idx_downloads_gid ON downloads(gid);
+CREATE INDEX IF NOT EXISTS idx_downloads_completed ON downloads(completed_at);
+CREATE INDEX IF NOT EXISTS idx_downloads_type ON downloads(download_type);
 
 -- Default settings
 INSERT OR IGNORE INTO settings (key, value) VALUES

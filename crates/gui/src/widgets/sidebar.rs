@@ -185,7 +185,7 @@ fn build_storage_widget(_model: &AppModel) -> gtk::Box {
                     let total = stat.0;
                     let free = stat.1;
                     let used_fraction = if total > 0 {
-                        1.0 - (free as f64 / total as f64)
+                        (1.0 - (free as f64 / total as f64)).clamp(0.0, 1.0)
                     } else {
                         0.0
                     };

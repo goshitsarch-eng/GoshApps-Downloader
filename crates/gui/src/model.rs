@@ -71,7 +71,12 @@ struct AppModelInner {
     on_notifications_changed: RefCell<Vec<Box<dyn Fn()>>>,
 }
 
-// SAFETY: AppModel is only accessed from the GTK main thread.
+// SAFETY: AppModelInner contains RefCell and Cell types which are !Sync.
+// This is safe because GTK is single-threaded: all UI callbacks and
+// glib::spawn_future_local futures execute on the main thread. The Arc
+// wrapper exists only so that closures connected to signals can hold
+// a shared reference; no cross-thread access ever occurs.
+// The EngineBridge field *is* Send+Sync (it uses mpsc channels internally).
 unsafe impl Send for AppModelInner {}
 unsafe impl Sync for AppModelInner {}
 
@@ -356,13 +361,21 @@ impl AppModel {
     }
 
     fn handle_command_result(&self, _id: u64, result: crate::engine_bridge::CommandResult) {
-        // For now, handle bulk results generically
         match result {
+            crate::engine_bridge::CommandResult::ActiveDownloadsOk(val) => {
+                if let Ok(downloads) = serde_json::from_value::<Vec<Download>>(val) {
+                    self.set_downloads(downloads);
+                }
+            }
+            crate::engine_bridge::CommandResult::HistoryOk(val) => {
+                if let Ok(downloads) = serde_json::from_value::<Vec<Download>>(val) {
+                    self.set_completed_history(downloads);
+                }
+            }
             crate::engine_bridge::CommandResult::Ok(val) => {
-                // Try to interpret as Vec<Download>
-                if let Ok(downloads) = serde_json::from_value::<Vec<Download>>(val.clone()) {
+                // Generic result — try to interpret as Vec<Download> with heuristic
+                if let Ok(downloads) = serde_json::from_value::<Vec<Download>>(val) {
                     if !downloads.is_empty() {
-                        // Distinguish history vs active by checking if first entry is complete
                         if downloads.iter().all(|d| d.status == gosh_fetch_engine::types::DownloadState::Complete) {
                             self.set_completed_history(downloads);
                         } else {

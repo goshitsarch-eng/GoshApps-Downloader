@@ -29,6 +29,10 @@ pub enum EngineEvent {
 #[derive(Debug, Clone)]
 pub enum CommandResult {
     Ok(Value),
+    /// Result that is specifically completed download history
+    HistoryOk(Value),
+    /// Result that is specifically active/incomplete downloads
+    ActiveDownloadsOk(Value),
     Err(String),
 }
 
@@ -115,27 +119,49 @@ impl EngineBridge {
 
     /// Send a command to the engine.
     pub fn send(&self, cmd: EngineCommand) {
-        let _ = self.cmd_tx.send(cmd);
+        if let Err(e) = self.cmd_tx.send(cmd) {
+            log::error!("Failed to send command to engine: {}", e);
+        }
     }
 
     /// Start the engine on a background tokio runtime.
     /// Events will be forwarded to the glib main loop via `event_sender`.
     pub fn start(&self, event_sender: GlibSender<EngineEvent>) {
-        let rx = self.cmd_rx_holder.lock().unwrap().take()
-            .expect("EngineBridge::start called more than once");
+        let rx = match self.cmd_rx_holder.lock() {
+            Ok(mut guard) => match guard.take() {
+                Some(rx) => rx,
+                None => {
+                    log::error!("EngineBridge::start called more than once");
+                    return;
+                }
+            },
+            Err(e) => {
+                log::error!("Failed to lock command receiver: {}", e);
+                return;
+            }
+        };
 
-        std::thread::Builder::new()
+        let event_sender_clone = event_sender.clone();
+        if let Err(e) = std::thread::Builder::new()
             .name("engine-runtime".into())
             .spawn(move || {
-                let rt = tokio::runtime::Builder::new_multi_thread()
+                match tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .thread_name("engine-worker")
                     .build()
-                    .expect("Failed to build tokio runtime");
-
-                rt.block_on(engine_loop(rx, event_sender));
+                {
+                    Ok(rt) => rt.block_on(engine_loop(rx, event_sender_clone)),
+                    Err(e) => {
+                        log::error!("Failed to build tokio runtime: {}", e);
+                    }
+                }
             })
-            .expect("Failed to spawn engine thread");
+        {
+            log::error!("Failed to spawn engine thread: {}", e);
+            let _ = event_sender.send_blocking(EngineEvent::InitError(
+                format!("Failed to spawn engine thread: {}", e),
+            ));
+        }
     }
 
     // Convenience methods for common operations
@@ -286,23 +312,28 @@ async fn engine_loop(
     event_tx: GlibSender<EngineEvent>,
 ) {
     // Determine data directory
-    let data_dir = dirs::data_dir()
-        .or_else(|| {
-            dirs::home_dir().map(|h| {
-                if cfg!(target_os = "macos") {
-                    h.join("Library/Application Support")
-                } else if cfg!(target_os = "windows") {
-                    h.join("AppData/Roaming")
-                } else {
-                    h.join(".local/share")
-                }
-            })
+    let data_dir = match dirs::data_dir().or_else(|| {
+        dirs::home_dir().map(|h| {
+            if cfg!(target_os = "macos") {
+                h.join("Library/Application Support")
+            } else if cfg!(target_os = "windows") {
+                h.join("AppData/Roaming")
+            } else {
+                h.join(".local/share")
+            }
         })
-        .expect("Could not determine platform data directory")
-        .join("com.goshapps.downloader");
+    }) {
+        Some(dir) => dir.join("com.goshapps.downloader"),
+        None => {
+            let msg = "Could not determine platform data directory";
+            log::error!("{}", msg);
+            let _ = event_tx.send(EngineEvent::InitError(msg.to_string())).await;
+            return;
+        }
+    };
 
     // Create broadcast channel for engine events
-    let (broadcast_tx, mut broadcast_rx) = broadcast::channel::<Value>(256);
+    let (broadcast_tx, mut broadcast_rx) = broadcast::channel::<Value>(2048);
 
     // Initialize the engine
     let state = AppState::new();
@@ -406,7 +437,11 @@ async fn engine_loop(
             }
             EngineCommand::GetAllDownloads { id } => {
                 let result = commands::get_all_downloads(&state).await;
-                send_result(&event_tx, id, result.map(|dl| serde_json::to_value(dl).unwrap_or_default())).await;
+                let cmd_result = match result {
+                    Ok(dl) => CommandResult::ActiveDownloadsOk(serde_json::to_value(dl).unwrap_or_default()),
+                    Err(e) => CommandResult::Err(e.to_string()),
+                };
+                let _ = event_tx.send(EngineEvent::CommandResult { id, result: cmd_result }).await;
             }
             EngineCommand::GetGlobalStats { id } => {
                 let result = commands::get_global_stats(&state).await;
@@ -463,7 +498,11 @@ async fn engine_loop(
             // Database
             EngineCommand::GetCompletedHistory { id } => {
                 let result = commands::db_get_completed_history(&state).await;
-                send_result(&event_tx, id, result.map(|dl| serde_json::to_value(dl).unwrap_or_default())).await;
+                let cmd_result = match result {
+                    Ok(dl) => CommandResult::HistoryOk(serde_json::to_value(dl).unwrap_or_default()),
+                    Err(e) => CommandResult::Err(e.to_string()),
+                };
+                let _ = event_tx.send(EngineEvent::CommandResult { id, result: cmd_result }).await;
             }
             EngineCommand::SaveDownload { download } => {
                 let _ = commands::db_save_download(&state, download).await;

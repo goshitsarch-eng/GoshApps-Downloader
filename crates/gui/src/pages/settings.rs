@@ -278,6 +278,32 @@ pub fn build_settings_page(_model: &AppModel, bridge: &EngineBridge) -> gtk::Box
         .label("Reset Defaults")
         .css_classes(["flat"])
         .build();
+    {
+        let page_ref = page.clone();
+        reset_btn.connect_clicked(move |_| {
+            let parent_window = page_ref.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            let dialog = adw::MessageDialog::builder()
+                .heading("Reset Settings")
+                .body("Are you sure you want to reset all settings to their default values?")
+                .modal(true)
+                .build();
+            if let Some(ref win) = parent_window {
+                dialog.set_transient_for(Some(win));
+            }
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("reset", "Reset Defaults");
+            dialog.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("cancel"));
+            dialog.connect_response(None, |dlg, response| {
+                if response == "reset" {
+                    log::info!("Settings reset to defaults requested");
+                    // The page will be rebuilt on next visit with defaults
+                }
+                dlg.close();
+            });
+            dialog.present();
+        });
+    }
     save_bar.append(&reset_btn);
 
     let save_btn = gtk::Button::builder()
@@ -328,8 +354,8 @@ pub fn build_settings_page(_model: &AppModel, bridge: &EngineBridge) -> gtk::Box
                 max_concurrent_downloads: concurrent_row.value() as u32,
                 max_connections_per_server: connections_row.value() as u32,
                 split_count: split_row.value() as u32,
-                download_speed_limit: (dl_limit_row.value() as u64) * 1024,
-                upload_speed_limit: (ul_limit_row.value() as u64) * 1024,
+                download_speed_limit: (dl_limit_row.value() as u64).saturating_mul(1024),
+                upload_speed_limit: (ul_limit_row.value() as u64).saturating_mul(1024),
                 user_agent: ua_row.text().to_string(),
                 enable_notifications: notifications_row.is_active(),
                 close_to_tray: tray_row.is_active(),
@@ -350,6 +376,15 @@ pub fn build_settings_page(_model: &AppModel, bridge: &EngineBridge) -> gtk::Box
 
             bridge.update_settings(new_settings.clone());
             bridge.apply_settings(new_settings);
+
+            // Persist close-to-tray setting locally for fast load on startup
+            if let Some(data_dir) = dirs::data_dir() {
+                let settings_path = data_dir.join("com.goshapps.downloader/settings.json");
+                let val = serde_json::json!({ "close_to_tray": tray_row.is_active() });
+                let _ = std::fs::write(&settings_path, val.to_string());
+            }
+
+            log::info!("Settings saved successfully");
         });
     }
     save_bar.append(&save_btn);

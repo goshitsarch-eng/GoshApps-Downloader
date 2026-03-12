@@ -4,133 +4,134 @@ This document describes how Gosh-Fetch is built, how its parts communicate, and 
 
 ## Overview
 
-Gosh-Fetch is a desktop download manager with three layers: a React frontend rendered by Electron, an Electron main process that manages the application lifecycle and IPC, and a Rust sidecar binary that handles all download operations and data storage.
+Gosh-Fetch is a native GTK4 download manager written entirely in Rust. It compiles to a single binary with two logical layers: a GTK4/libadwaita UI running on the glib main loop, and a download engine running on a background Tokio runtime. The two layers communicate through in-process channels -- there is no IPC, no child process, and no network protocol between them.
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| UI | React 19, Redux Toolkit, TypeScript | User interface |
-| Build | Vite 6 | Frontend bundling |
-| Desktop | Electron 35 | Window management, tray, IPC, auto-update |
-| Sidecar | Rust (Tokio, rusqlite) | Download engine, database, JSON-RPC server |
-| Engine | gosh-dl 0.3.2 | HTTP/BitTorrent downloads |
-| Database | SQLite | Settings, download history, tracker metadata |
+| UI | GTK4 0.9, libadwaita 0.7, gtk4-rs | User interface, GObject subclasses |
+| Bridge | tokio mpsc, async-channel | Command/event channels between threads |
+| Engine | gosh-fetch-engine (Rust library) | Download management, settings, database |
+| Downloads | gosh-dl 0.3.2 | HTTP/BitTorrent protocol implementation |
+| Database | SQLite (rusqlite, bundled) | Settings, download history, tracker metadata |
+
+## Application Lifecycle
+
+The application starts in `main.rs`, which creates a `GoshFetchApplication` (an `adw::Application` subclass) and calls `run()`. GTK takes over the main loop from this point.
+
+On the first `activate` signal (in `app.rs`):
+
+1. Application CSS is loaded from `css/style.css` via `CssProvider`.
+2. An `EngineBridge` is created, which sets up the `mpsc` command channel.
+3. An `AppModel` is created, which holds all shared application state.
+4. `bridge.start(sender)` spawns the engine thread (see below).
+5. A `glib::spawn_future_local` task listens on an `async-channel` receiver for engine events and forwards them to `AppModel::handle_engine_event`.
+6. The main `GoshFetchWindow` is created and presented.
+
+On subsequent `activate` signals (e.g., the user tries to open a second instance), the existing window is presented.
 
 ## How the Layers Communicate
 
-The frontend never talks to the Rust sidecar directly. All communication flows through Electron's IPC:
-
 ```
-React (renderer process)
+GTK Main Thread (glib main loop)
+    |                                  ^
+    |  EngineCommand (mpsc::send)     |  EngineEvent (async_channel::recv)
+    |                                  |
+    v                                  |
+Engine Thread (tokio runtime)
     |
-    |  window.electronAPI.invoke(method, params)
-    |  (ipcRenderer.invoke -> ipcMain.handle)
+    |  Direct Rust function calls
     v
-Electron Main Process
+gosh-fetch-engine commands module
     |
-    |  JSON-RPC over stdin/stdout
-    |  (SidecarManager writes JSON lines to child process stdin,
-    |   reads JSON line responses from stdout)
+    |  AppState -> EngineAdapter -> gosh-dl API
     v
-gosh-fetch-engine (Rust sidecar)
-    |
-    |  Direct Rust API calls
-    v
-gosh-dl (download engine library)
+gosh-dl (DownloadEngine)
 ```
 
-The frontend calls `window.electronAPI.invoke('method_name', params)` which goes through `ipcRenderer.invoke('rpc-invoke', ...)` in the preload script. The main process receives this via `ipcMain.handle('rpc-invoke', ...)`, checks the method against an allowlist of 42 permitted methods, then forwards it as a JSON-RPC request to the sidecar's stdin. The sidecar processes the request and writes a JSON-RPC response to stdout.
+### Commands: GTK to Engine
 
-Events flow in the reverse direction. The sidecar emits events (download progress, state changes, global stats) as JSON lines on stdout. The Electron main process reads these and forwards them to the renderer via `mainWindow.webContents.send('rpc-event', eventName, data)`. The renderer listens with `window.electronAPI.onEvent(callback)`.
+The GTK thread sends commands to the engine via `EngineBridge::send()`, which writes an `EngineCommand` enum variant to a `tokio::sync::mpsc::UnboundedSender`. The enum includes variants for all operations: `AddDownload`, `PauseDownload`, `GetAllDownloads`, `UpdateSettings`, etc.
 
-Some IPC methods are handled directly by the Electron main process without involving the sidecar. These include native dialogs (`select-file`, `select-directory`), OS integration (`get-native-theme`, `set-login-item-settings`, `get-disk-space`), notifications, and the auto-updater.
+Commands that produce results include a `u64` ID. When the engine completes the command, it sends back an `EngineEvent::CommandResult { id, result }` so the UI can match responses to requests.
 
-## Frontend Architecture
+Fire-and-forget commands (pause, resume, remove, update settings) do not carry an ID and do not produce a response event.
 
-### Routing
+### Events: Engine to GTK
 
-The app uses React Router with `HashRouter` (important for Electron's `file://` protocol in production). Routes are defined in `App.tsx`:
+Events flow from the engine thread to the GTK main thread via an `async_channel::Sender<EngineEvent>`. The `EngineEvent` enum covers:
 
-- `/` -- Downloads page (with optional `?filter=active|paused` query parameter)
-- `/history` -- Completed download history
-- `/statistics` -- Download statistics
-- `/settings` -- Configuration
-- `/scheduler` -- Bandwidth scheduling rules
+- `Ready` -- engine initialized successfully
+- `InitError(String)` -- engine failed to initialize
+- `DownloadEvent { event_name, data }` -- a download lifecycle event (added, started, progress, completed, failed, paused, resumed, removed, state-changed)
+- `GlobalStats(GlobalStat)` -- aggregate speed/count stats, emitted every second
+- `CommandResult { id, result }` -- response to a query command
 
-`About.tsx` exists as a component but is not a routed page.
+The GTK side receives these in a `glib::spawn_future_local` task and dispatches them to the `AppModel`, which updates its internal state and notifies bound widgets.
 
-### State Management
+### Why Two Channel Types
 
-Redux Toolkit manages all application state through six slices:
+- **tokio mpsc** (commands): The receiver must live on the Tokio runtime, so Tokio's own channel is used.
+- **async-channel** (events): The receiver must be polled on the glib main loop. `async-channel` is runtime-agnostic, so it works with `glib::spawn_future_local` without pulling in Tokio on the GTK thread.
 
-**downloadSlice** uses `createEntityAdapter` keyed by download `gid` for normalized storage. This means individual downloads can be updated without replacing the entire list, and selectors like `selectAll`, `selectById` work efficiently. The slice provides selectors for filtering by status (active, paused, completed, error).
+## Engine Thread
 
-**statsSlice** tracks global download/upload speeds, active/waiting/stopped counts, and engine connection status. The `isConnected` flag drives the disconnection banner in the UI.
+`EngineBridge::start()` spawns a dedicated OS thread named `engine-runtime` via `std::thread::Builder`. This thread creates a Tokio multi-thread runtime and blocks on `engine_loop()`.
 
-**themeSlice** supports three modes: `dark`, `light`, and `system`. System mode listens for OS theme changes via `native-theme-changed` events from Electron. The active theme is applied by setting a `data-theme` attribute on the document element, which CSS variables respond to.
+The engine loop:
 
-**notificationSlice** accumulates in-app notifications for download events (added, completed, failed), shown in the `NotificationDropdown` component.
+1. Determines the platform data directory (`~/.local/share/com.goshapps.downloader` on Linux).
+2. Creates a `broadcast::channel` for engine events.
+3. Initializes `AppState`, which opens the SQLite database, loads saved settings, configures gosh-dl's `EngineConfig`, starts the `DownloadEngine`, and wraps it in an `EngineAdapter`.
+4. Spawns an **event forwarder** task: subscribes to gosh-dl's `broadcast` events and relays them as `EngineEvent::DownloadEvent` to the GTK thread.
+5. Spawns a **global stats emitter** task: queries `get_global_stats()` every second and sends the result as `EngineEvent::GlobalStats`.
+6. Enters the main command-processing loop, matching on `EngineCommand` variants and calling the corresponding `commands::*` functions.
 
-**updaterSlice** tracks auto-update state: whether an update is available, download progress, and whether it has finished downloading.
+On `EngineCommand::Shutdown`, the loop persists completed downloads to the database, aborts the event listener, calls `engine.shutdown()`, and exits.
 
-**orderSlice** manages the drag-and-drop ordering of download cards, syncing with the engine's priority system.
+## AppState
 
-### Event Handling
+`AppState` (in `crates/engine/src/state.rs`) is the central coordinator for the engine layer. It owns:
 
-`App.tsx` sets up a single event listener via `window.electronAPI.onEvent()` that handles all sidecar events. Download lifecycle events (`download:added`, `download:completed`, `download:failed`, `download:paused`, `download:resumed`, `download:state-changed`, `download:removed`) trigger a `fetchDownloads()` dispatch to refresh the download list. The `global-stats` event updates the stats slice every second.
+- `Arc<DownloadEngine>` -- the gosh-dl engine instance
+- `EngineAdapter` -- type conversion layer between gosh-dl and frontend types
+- `Database` -- SQLite connection wrapped in `Arc<Mutex<Connection>>`
+- `TrackerUpdater` -- fetches and caches community tracker lists
+- Configuration flags (e.g., `close_to_tray`)
 
-As a fallback, the Downloads page also polls every 5 seconds. But the primary mechanism is push-based -- the sidecar emits events through gosh-dl's event subscription system, and they propagate through stdout to the renderer in near real-time.
+All fields are behind `Arc<RwLock<Option<T>>>` to support late initialization and safe concurrent access from multiple Tokio tasks.
 
-### Styling
+Key methods:
+- `initialize(data_dir, event_tx)` -- sets up the database, loads settings, creates the engine
+- `shutdown()` -- persists completed downloads, stops the engine
+- `get_adapter()` / `get_engine()` / `get_db()` -- accessors that return `Result<T>` (error if not yet initialized)
+- `reinitialize(event_tx)` -- shuts down and re-initializes (used when settings require an engine restart)
 
-All styles use a CSS custom property (variable) design system defined in `src/App.css`. There is no Tailwind or CSS-in-JS. The design tokens cover colors, spacing, typography scales, border radii, and transitions. Theme switching works by redefining these variables under `[data-theme="light"]` and `[data-theme="dark"]` selectors.
+## AppModel
 
-Icons are primarily Google Material Symbols Outlined, loaded as a self-hosted woff2 font file from `public/fonts/`. This avoids external network requests and complies with the production Content Security Policy (`font-src 'self'`). Some legacy components still use lucide-react.
+`AppModel` (in `crates/gui/src/model.rs`) is the GUI's shared state container, replacing what would be a Redux store in a web application. It holds:
 
-## Sidecar Architecture
+- The active download list (from the engine)
+- Completed download history (from the database)
+- Global speed stats
+- In-app notifications
+- Speed samples for the statistics chart
+- Download ordering for drag-and-drop
 
-The Rust sidecar (`gosh-fetch-engine`) is a standalone binary that communicates exclusively via JSON-RPC over stdin/stdout. It never opens network ports or creates its own windows.
+The model is wrapped in `Arc` for sharing across widgets. Widgets query the model for data and the model notifies widgets when state changes through GObject signals and manual invalidation.
 
-### Startup
+## Commands Module
 
-On startup (`main.rs`), the sidecar initializes `AppState`, which creates the SQLite database (loading saved settings or using defaults for a fresh install), configures and starts the gosh-dl `DownloadEngine`, wraps it in an `EngineAdapter` for type conversion, and then enters the RPC server loop.
+The `commands` module in `crates/engine/src/commands/` provides the public API of the engine library. Each function takes `&AppState` as its first argument and returns `Result<T>`. The module is organized by domain:
 
-### RPC Server
+- `download.rs` -- `add_download`, `add_urls`, `pause_download`, `pause_all`, `resume_download`, `resume_all`, `remove_download`, `get_download_status`, `get_all_downloads`, `get_active_downloads`, `get_global_stats`, `set_speed_limit`
+- `torrent.rs` -- `add_torrent_file`, `add_magnet`, `get_torrent_files`, `select_torrent_files`, `parse_torrent_file`, `parse_magnet_uri`, `get_peers`
+- `settings.rs` -- `get_settings`, `update_settings`, `set_close_to_tray`, `set_user_agent`, `get_tracker_list`, `update_tracker_list`, `apply_settings_to_engine`, `get_user_agent_presets`
+- `database.rs` -- `db_get_completed_history`, `db_save_download`, `db_remove_download`, `db_clear_history`, `db_get_settings`, `db_save_settings`, `db_load_incomplete`
+- `system.rs` -- `get_engine_version`, `open_download_folder`, `open_file_location`, `get_default_download_path`, `get_app_version`, `get_app_info`
 
-`rpc_server.rs` is the heart of the sidecar. It sets up three concurrent tasks:
+## Database
 
-1. A **stdout writer** task that serializes all outbound data through a single `mpsc` channel, preventing write contention between the event forwarder, stats emitter, and RPC response handlers.
-2. An **event forwarder** that reads gosh-dl engine events from a broadcast channel and sends them to stdout.
-3. A **stats emitter** that queries `get_global_stats()` every second and sends the result to stdout.
-
-The main loop reads JSON-RPC requests from async stdin (using `tokio::io::BufReader`), parses them, and spawns each request handler as an independent Tokio task for concurrent processing. Responses are sent back through the shared stdout channel.
-
-### Command Handlers
-
-RPC methods are dispatched in `rpc_server.rs` to handler functions organized by domain:
-
-- `commands/download.rs` -- Add, pause, resume, remove downloads; get status/list
-- `commands/torrent.rs` -- Torrent file and magnet link operations, peer info
-- `commands/settings.rs` -- Settings management, engine configuration, tracker lists, user agent presets
-- `commands/database.rs` -- Direct database queries (completed history, settings persistence)
-- `commands/system.rs` -- App info, file/folder opening, default paths
-
-### Security
-
-The sidecar validates all inputs:
-
-- **URL validation**: Only `http://`, `https://`, and `magnet:` schemes are accepted. Private/loopback IPs (127.x, 10.x, 172.16-31.x, 192.168.x, link-local, ::1, fc00::/7) are blocked. Maximum URL length is 8192 characters.
-- **Torrent path validation**: Files must have a `.torrent` extension and exist on disk.
-- **Path sanitization**: `open_download_folder` and `open_file_location` canonicalize paths, verify existence, and reject URL schemes before passing to the OS file manager.
-
-On the Electron side, `ALLOWED_RPC_METHODS` in `main.ts` acts as a second layer of defense -- any method not in the set is rejected before it reaches the sidecar.
-
-### Engine Adapter
-
-`engine_adapter.rs` bridges the gap between gosh-dl's internal types and the JSON-serializable types the frontend expects. It converts download statuses, options, peer info, and file lists. It also handles GID (download identifier) parsing, supporting both UUID and legacy formats.
-
-### Database
-
-The SQLite database (`gosh-fetch.db` in the user data directory) stores four tables:
+The SQLite database (`gosh-fetch.db` in the user data directory) stores five tables:
 
 **downloads** -- Download metadata and history. Stores the GID, name, URL/magnet URI, type (http/torrent/magnet), status, sizes, speeds, paths, timestamps, and selected files. Indexed on status, created_at, and gid.
 
@@ -142,36 +143,54 @@ The SQLite database (`gosh-fetch.db` in the user data directory) stores four tab
 
 **schema_version** -- Migration version tracking for future schema upgrades.
 
-Database operations use `tokio::task::spawn_blocking` to run SQLite I/O on Tokio's blocking thread pool, and settings saves are wrapped in transactions for atomicity.
+The `Database` struct wraps a `Connection` in `Arc<Mutex<...>>`. Async database methods use `tokio::task::spawn_blocking` to run SQLite I/O on Tokio's blocking thread pool. Settings saves are wrapped in transactions for atomicity.
 
 Note that gosh-dl maintains its own separate database (`engine.db`) for internal engine state like download segments and recovery data. The two databases serve different purposes and this separation is intentional.
 
-## Electron Main Process
+## Input Validation
 
-The main process (`src-electron/main.ts`) handles:
+URL and path validation is handled by `validation.rs` before inputs reach the engine:
 
-**Sidecar management** -- Spawns the Rust binary as a child process via `SidecarManager`. If the sidecar crashes, it auto-restarts up to 3 times with exponential backoff (1s, 2s, 4s). The renderer is notified of engine status via `engine-status` events.
+- **URL validation**: Only `http://`, `https://`, and `magnet:` schemes are accepted. Private/loopback IPs (127.x, 10.x, 172.16-31.x, 192.168.x, link-local, ::1, fc00::/7) are blocked. Maximum URL length is 8192 characters.
+- **Torrent path validation**: Files must have a `.torrent` extension and exist on disk.
+- **Path sanitization**: `open_download_folder` and `open_file_location` canonicalize paths, verify existence, and reject URL schemes before passing to the OS file manager via `xdg-open` (Linux), `open` (macOS), or `explorer` (Windows).
 
-**Window management** -- Creates the main `BrowserWindow` with context isolation and no node integration. Window position, size, and maximized state persist between sessions via a JSON file in the user data directory.
+## Error Handling
 
-**System tray** -- Creates a tray icon with a popup window showing live download stats. On Linux/Windows, a single click toggles the popup. On macOS, double-click is used instead (single click is reserved for the context menu on macOS).
+Errors are defined in `error.rs` using `thiserror`. The `Error` enum covers engine errors, initialization failures, database errors, IO, serialization, input validation, not-found, and network errors. Each variant has a numeric error code. The `Error` type implements `Serialize` for transport in `CommandResult`.
 
-**IPC bridge** -- `ipcMain.handle('rpc-invoke', ...)` validates methods against the allowlist and forwards them to the sidecar. Additional IPC handlers provide native OS functionality: file/directory dialogs, notifications, disk space queries, native theme detection, login item settings, protocol client management, settings import, and auto-updater controls.
+Errors from gosh-dl's `EngineError` are automatically converted into the application's `Error` type via a `From` implementation.
 
-**Application menu** -- macOS gets a standard application menu with app, edit, view, and window menus (required for Cmd+Q, Cmd+C/V/X to work). Linux and Windows have no menu bar.
+## GTK4 UI Architecture
 
-**Auto-update** -- Uses `electron-updater` with GitHub Releases as the provider. Checks for updates on startup but does not auto-download. Update availability, download progress, and completion are forwarded to the renderer as events.
+### Window and Layout
 
-**Single instance** -- `app.requestSingleInstanceLock()` ensures only one instance runs. If a second instance is launched (e.g., by clicking a magnet link), the existing window is focused and the protocol URL or torrent file path is forwarded.
+`GoshFetchWindow` is the main application window. It contains a sidebar for navigation, a content area that swaps between pages (Downloads, History, Statistics, Scheduler, Settings), a status bar, and a notification dropdown.
 
-**Protocol handling** -- Registers as the handler for `magnet:` URIs. On macOS, `open-url` and `open-file` events handle protocol URLs and `.torrent` file associations. On Windows/Linux, these arrive via `argv` on the `second-instance` event.
+### Pages
 
-**Content Security Policy** -- In production, response headers enforce `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'`. The tray popup is exempted since it is a trusted local file with inline scripts.
+Each page is a GTK4 widget in `crates/gui/src/pages/`:
+- `downloads.rs` -- Active download list with active/paused filter tabs
+- `history.rs` -- Completed downloads with file/folder open actions
+- `settings.rs` -- All configuration options organized in sections
+- `statistics.rs` -- Download/upload speed charts
+- `scheduler.rs` -- Bandwidth scheduling rule editor
 
-## Build and Packaging
+### Widgets
 
-The frontend is built with Vite into `dist/`. The Electron main process TypeScript is compiled into `dist-electron/`. The Rust sidecar is compiled separately with `cargo build` into `src-rust/target/`. For production builds, `electron-builder` packages everything together using the configuration in `electron-builder.yml`.
+Custom widgets in `crates/gui/src/widgets/` follow the GObject subclass pattern:
+- `download_card.rs` -- Expanded card showing progress, speed, ETA, and controls
+- `compact_download_row.rs` -- Dense row for list view
+- `sidebar.rs` -- Navigation with page links and disk space widget
+- `status_bar.rs` -- Bottom bar with global speed and active download count
+- `notification_dropdown.rs` -- Popup showing recent download events
 
-The sidecar binary, tray icon, tray popup HTML, and fonts are bundled as `extraResources`. Output formats are AppImage/deb/rpm for Linux, DMG for macOS, and NSIS installer plus portable for Windows.
+### Dialogs
 
-CI workflows in `.github/workflows/` build for all three platforms and run both Rust and frontend tests before building.
+- `add_download.rs` -- Dialog for adding new downloads with advanced options
+- `onboarding.rs` -- First-run setup wizard
+- `torrent_picker.rs` -- File selection for multi-file torrents
+
+### CSS
+
+All visual styling uses GTK CSS loaded via `CssProvider` from `src/css/style.css`. Theme switching uses libadwaita's built-in color scheme support (`adw::StyleManager`).

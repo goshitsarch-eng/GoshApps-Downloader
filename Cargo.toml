@@ -1,3 +1,11 @@
 [workspace]
 members = ["crates/engine", "crates/gui"]
 resolver = "2"
+
+[workspace.package]
+version = "3.0.0"
+authors = ["Gosh"]
+license = "AGPL-3.0"
+repository = "https://github.com/goshitsarch-eng/Gosh-Fetch"
+edition = "2021"
+description = "A native GTK4 download manager for Linux, powered by gosh-dl"

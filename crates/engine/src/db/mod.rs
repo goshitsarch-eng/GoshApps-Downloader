@@ -362,7 +362,7 @@ pub fn download_type_from_url(url: &str) -> DownloadType {
     let lower = url.to_lowercase();
     if lower.starts_with("magnet:") {
         DownloadType::Magnet
-    } else if lower.ends_with(".torrent") || lower.contains("torrent") {
+    } else if lower.ends_with(".torrent") {
         DownloadType::Torrent
     } else {
         DownloadType::Http
@@ -389,7 +389,8 @@ mod tests {
         assert_eq!(download_type_from_url("https://example.com/file.torrent"), DownloadType::Torrent);
         assert_eq!(download_type_from_url("magnet:?xt=urn:btih:abc"), DownloadType::Magnet);
         assert_eq!(download_type_from_url("MAGNET:?xt=urn:btih:abc"), DownloadType::Magnet);
-        assert_eq!(download_type_from_url("https://example.com/torrent/details"), DownloadType::Torrent);
+        // Substring "torrent" in URL path no longer matches — must end with .torrent
+        assert_eq!(download_type_from_url("https://example.com/torrent/details"), DownloadType::Http);
     }
 
     #[test]

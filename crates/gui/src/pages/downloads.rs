@@ -33,7 +33,7 @@ pub fn build_downloads_page(model: &AppModel, bridge: &EngineBridge) -> gtk::Box
     toolbar.append(&search_entry);
 
     // Category filter
-    let categories = ["All", "Video", "Audio", "Documents", "Software", "Images"];
+    let categories = crate::DOWNLOAD_CATEGORIES;
     let category_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(4)
@@ -41,7 +41,7 @@ pub fn build_downloads_page(model: &AppModel, bridge: &EngineBridge) -> gtk::Box
         .build();
     let active_category: Rc<RefCell<String>> = Rc::new(RefCell::new("All".to_string()));
 
-    for cat in &categories {
+    for cat in categories {
         let btn = gtk::ToggleButton::builder()
             .label(*cat)
             .css_classes(["flat"])
@@ -60,28 +60,32 @@ pub fn build_downloads_page(model: &AppModel, bridge: &EngineBridge) -> gtk::Box
     }
     toolbar.append(&category_box);
 
-    // Batch action buttons
+    // Batch action buttons (grouped)
+    let batch_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .css_classes(["linked"])
+        .build();
+
     let pause_all_btn = gtk::Button::builder()
         .icon_name("media-playback-pause-symbolic")
         .tooltip_text("Pause All")
-        .css_classes(["flat"])
         .build();
     {
         let bridge = bridge.clone();
         pause_all_btn.connect_clicked(move |_| bridge.pause_all());
     }
-    toolbar.append(&pause_all_btn);
+    batch_box.append(&pause_all_btn);
 
     let resume_all_btn = gtk::Button::builder()
         .icon_name("media-playback-start-symbolic")
         .tooltip_text("Resume All")
-        .css_classes(["flat"])
         .build();
     {
         let bridge = bridge.clone();
         resume_all_btn.connect_clicked(move |_| bridge.resume_all());
     }
-    toolbar.append(&resume_all_btn);
+    batch_box.append(&resume_all_btn);
+    toolbar.append(&batch_box);
 
     page.append(&toolbar);
 
@@ -149,7 +153,7 @@ pub fn build_downloads_page(model: &AppModel, bridge: &EngineBridge) -> gtk::Box
 
     let empty_icon = gtk::Image::builder()
         .icon_name("folder-download-symbolic")
-        .pixel_size(64)
+        .pixel_size(96)
         .css_classes(["dim-label"])
         .build();
     empty_state.append(&empty_icon);
@@ -161,10 +165,35 @@ pub fn build_downloads_page(model: &AppModel, bridge: &EngineBridge) -> gtk::Box
     empty_state.append(&empty_label);
 
     let empty_sub = gtk::Label::builder()
-        .label("Add a download with Ctrl+N or the + button")
+        .label("Paste a URL, drag a .torrent file, or click the button below")
         .css_classes(["dim-label"])
         .build();
     empty_state.append(&empty_sub);
+
+    let empty_add_btn = gtk::Button::builder()
+        .label("Add Download")
+        .css_classes(["suggested-action", "pill"])
+        .margin_top(8)
+        .build();
+    {
+        let bridge = bridge.clone();
+        let model = model.clone();
+        empty_add_btn.connect_clicked(move |btn| {
+            if let Some(root) = btn.root() {
+                if let Some(win) = root.downcast_ref::<gtk::Window>() {
+                    crate::dialogs::add_download::show_add_download_dialog(win, &model, &bridge);
+                }
+            }
+        });
+    }
+    empty_state.append(&empty_add_btn);
+
+    let empty_tips = gtk::Label::builder()
+        .label("Tip: Use Ctrl+N to quickly add a download")
+        .css_classes(["caption", "dim-label"])
+        .margin_top(4)
+        .build();
+    empty_state.append(&empty_tips);
 
     content.append(&empty_state);
     scroll.set_child(Some(&content));

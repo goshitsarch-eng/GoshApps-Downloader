@@ -9,7 +9,7 @@
 /* Badge: small rounded pill for notification counts */
 .badge {
     background: @accent_bg_color;
-    color: white;
+    color: @accent_fg_color;
     padding: 2px 8px;
     border-radius: 12px;
     font-size: 0.8em;
@@ -73,4 +73,29 @@ progressbar.paused > trough > progress {
 .toolbar searchentry,
 searchentry.toolbar-search {
     min-width: 200px;
+}
+
+/* Progress bar: increased height for better visibility */
+progressbar > trough {
+    min-height: 8px;
+}
+
+/* Pill-shaped buttons */
+.pill {
+    border-radius: 9999px;
+    padding: 8px 24px;
+}
+
+/* Drag handle styling */
+image[icon-name="list-drag-handle-symbolic"] {
+    opacity: 0.4;
+    cursor: grab;
+}
+image[icon-name="list-drag-handle-symbolic"]:hover {
+    opacity: 0.8;
+}
+
+/* Compact row hover effect */
+.boxed-list > row:hover {
+    background-color: alpha(@window_fg_color, 0.03);
 }

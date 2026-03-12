@@ -1,6 +1,5 @@
 use crate::db::Database;
 use crate::engine_adapter::EngineAdapter;
-use crate::types::DownloadState;
 use crate::utils::TrackerUpdater;
 use crate::Result;
 use gosh_dl::{DownloadEngine, DownloadEvent, EngineConfig};
@@ -56,42 +55,49 @@ impl AppState {
         // Load saved settings from DB, falling back to defaults for a fresh install
         let settings = db.get_settings().unwrap_or_default();
 
-        let mut config = EngineConfig::default();
-        config.download_dir = PathBuf::from(&settings.download_path);
-        config.max_concurrent_downloads = settings.max_concurrent_downloads as usize;
-        config.max_connections_per_download = settings
-            .max_connections_per_server
-            .max(settings.split_count) as usize;
-        config.user_agent = settings.user_agent.clone();
-        config.enable_dht = settings.bt_enable_dht;
-        config.enable_pex = settings.bt_enable_pex;
-        config.enable_lpd = settings.bt_enable_lpd;
-        config.max_peers = settings.bt_max_peers as usize;
-        config.seed_ratio = settings.bt_seed_ratio;
-        config.database_path = Some(data_dir.join("engine.db"));
-
-        if settings.download_speed_limit > 0 {
-            config.global_download_limit = Some(settings.download_speed_limit);
-        }
-        if settings.upload_speed_limit > 0 {
-            config.global_upload_limit = Some(settings.upload_speed_limit);
-        }
-
-        // Proxy
-        if !settings.proxy_url.is_empty() {
-            config.http.proxy_url = Some(settings.proxy_url.clone());
-        }
-
-        // Timeouts and retries
-        config.http.connect_timeout = settings.connect_timeout;
-        config.http.read_timeout = settings.read_timeout;
-        config.http.max_retries = settings.max_retries as usize;
-
-        // File allocation mode
-        config.torrent.allocation_mode = match settings.allocation_mode.as_str() {
-            "full" => gosh_dl::AllocationMode::Full,
-            "sparse" => gosh_dl::AllocationMode::Sparse,
-            _ => gosh_dl::AllocationMode::None,
+        let config = EngineConfig {
+            download_dir: PathBuf::from(&settings.download_path),
+            max_concurrent_downloads: settings.max_concurrent_downloads as usize,
+            max_connections_per_download: settings
+                .max_connections_per_server
+                .max(settings.split_count) as usize,
+            user_agent: settings.user_agent.clone(),
+            enable_dht: settings.bt_enable_dht,
+            enable_pex: settings.bt_enable_pex,
+            enable_lpd: settings.bt_enable_lpd,
+            max_peers: settings.bt_max_peers as usize,
+            seed_ratio: settings.bt_seed_ratio,
+            database_path: Some(data_dir.join("engine.db")),
+            global_download_limit: if settings.download_speed_limit > 0 {
+                Some(settings.download_speed_limit)
+            } else {
+                None
+            },
+            global_upload_limit: if settings.upload_speed_limit > 0 {
+                Some(settings.upload_speed_limit)
+            } else {
+                None
+            },
+            http: gosh_dl::HttpConfig {
+                proxy_url: if settings.proxy_url.is_empty() {
+                    None
+                } else {
+                    Some(settings.proxy_url.clone())
+                },
+                connect_timeout: settings.connect_timeout,
+                read_timeout: settings.read_timeout,
+                max_retries: settings.max_retries as usize,
+                ..Default::default()
+            },
+            torrent: gosh_dl::TorrentConfig {
+                allocation_mode: match settings.allocation_mode.as_str() {
+                    "full" => gosh_dl::AllocationMode::Full,
+                    "sparse" => gosh_dl::AllocationMode::Sparse,
+                    _ => gosh_dl::AllocationMode::None,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
         };
 
         let engine = DownloadEngine::new(config).await?;
@@ -116,7 +122,10 @@ impl AppState {
                     DownloadEvent::Paused { .. } => "download:paused",
                     DownloadEvent::Resumed { .. } => "download:resumed",
                 };
-                let payload = serde_json::to_value(&event).unwrap_or(Value::Null);
+                let payload = serde_json::to_value(&event).unwrap_or_else(|e| {
+                    log::warn!("Failed to serialize download event: {}", e);
+                    Value::Null
+                });
                 let msg = serde_json::json!({
                     "event": event_name,
                     "data": payload,
@@ -159,29 +168,28 @@ impl AppState {
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        // Persist a final history snapshot so completed items survive app restarts.
-        // We intentionally avoid writing incomplete states here because incomplete
-        // restoration is handled by the engine's own storage layer.
+        // Persist all downloads so progress survives restarts.
         if let (Some(adapter), Some(db)) = (
             self.adapter.read().await.clone(),
             self.db.read().await.clone(),
         ) {
             let downloads = adapter.get_all();
             for download in downloads {
-                if download.status != DownloadState::Complete {
-                    continue;
-                }
                 if let Err(e) = db.save_download_async(download).await {
-                    log::warn!("Failed to persist download snapshot during shutdown: {}", e);
+                    log::warn!("Failed to persist download during shutdown: {}", e);
                 }
             }
         }
 
+        // Cancel the event listener gracefully
         if let Some(handle) = self.event_handle.write().await.take() {
             handle.abort();
         }
+        // Always attempt engine shutdown regardless of earlier errors
         if let Some(ref engine) = *self.engine.read().await {
-            engine.shutdown().await?;
+            if let Err(e) = engine.shutdown().await {
+                log::error!("Engine shutdown error: {}", e);
+            }
         }
         log::info!("Download engine shut down");
         Ok(())

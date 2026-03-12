@@ -11,6 +11,9 @@ use glib::ExitCode;
 
 const APP_ID: &str = "com.goshapps.downloader";
 
+/// Shared download category definitions for filtering across pages.
+pub const DOWNLOAD_CATEGORIES: &[&str] = &["All", "Video", "Audio", "Documents", "Software", "Images"];
+
 fn main() -> ExitCode {
     env_logger::init();
 

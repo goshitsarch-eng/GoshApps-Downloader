@@ -12,7 +12,7 @@ pub fn build_status_bar(model: &AppModel) -> gtk::Box {
         .margin_end(12)
         .margin_top(4)
         .margin_bottom(4)
-        .css_classes(["toolbar"])
+        .css_classes(["toolbar", "status-bar"])
         .build();
 
     // Download speed
@@ -33,6 +33,13 @@ pub fn build_status_bar(model: &AppModel) -> gtk::Box {
     bar.append(&ul_icon);
     bar.append(&ul_label);
 
+    // Active downloads count
+    let active_label = gtk::Label::builder()
+        .label("0 active")
+        .css_classes(["caption", "dim-label"])
+        .build();
+    bar.append(&active_label);
+
     // Spacer
     let spacer = gtk::Box::builder().hexpand(true).build();
     bar.append(&spacer);
@@ -50,6 +57,7 @@ pub fn build_status_bar(model: &AppModel) -> gtk::Box {
     {
         let dl_label = dl_label.clone();
         let ul_label = ul_label.clone();
+        let active_label = active_label.clone();
         let conn_label = conn_label.clone();
         let conn_icon = conn_icon.clone();
         let model = model.clone();
@@ -58,6 +66,8 @@ pub fn build_status_bar(model: &AppModel) -> gtk::Box {
             let model = &model_for_closure;
             dl_label.set_label(&format_speed(model.download_speed()));
             ul_label.set_label(&format_speed(model.upload_speed()));
+            let active = model.num_active();
+            active_label.set_label(&format!("{} active", active));
             if model.is_connected() {
                 conn_label.set_label("Online");
                 conn_icon.set_icon_name(Some("network-transmit-receive-symbolic"));

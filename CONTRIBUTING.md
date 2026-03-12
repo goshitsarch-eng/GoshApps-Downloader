@@ -6,171 +6,169 @@ Thanks for wanting to contribute. This guide covers setting up the project for d
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 20+
 - [Rust](https://rustup.rs/) 1.77+
-- Platform-specific dependencies (see [README.md](README.md#requirements))
+- GTK4 development libraries (4.12+)
+- libadwaita development libraries (1.5+)
+- A C compiler (gcc or clang)
+- Platform-specific dependencies (see below)
+
+### Linux Dependencies
+
+**Debian/Ubuntu:**
+
+```bash
+sudo apt install libgtk-4-dev libadwaita-1-dev build-essential
+```
+
+**Fedora:**
+
+```bash
+sudo dnf install gtk4-devel libadwaita-devel gcc
+```
+
+**Arch Linux:**
+
+```bash
+sudo pacman -S gtk4 libadwaita base-devel
+```
+
+SQLite is bundled automatically via the `rusqlite` `bundled` feature, so you do not need to install SQLite development headers separately.
 
 ### Getting Started
 
-Fork and clone the repository, then install everything:
+Fork and clone the repository, then build:
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/Gosh-Fetch.git
 cd Gosh-Fetch
-npm install
+cargo build
 ```
 
-Build the Rust engine in debug mode:
+Run the application:
 
 ```bash
-cargo build --manifest-path src-rust/Cargo.toml
+cargo run
 ```
 
-Start the app in development mode:
-
-```bash
-npm run electron:dev
-```
-
-This runs `tsc` to compile the Electron main process, starts Vite on port 5173, waits for it to be ready, then launches Electron pointed at localhost. You can also run the pieces separately if you prefer -- `npm run dev` starts just the Vite dev server.
-
-### Available Scripts
+### Available Commands
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start Vite dev server |
-| `npm run build` | Build frontend for production (tsc + vite build) |
-| `npm run build:electron` | Compile Electron TypeScript (main process) |
-| `npm run electron:dev` | Full development environment (Vite + Electron) |
-| `npm run electron:build` | Production build (frontend + Electron + electron-builder) |
-| `npm test` | Run frontend tests (Vitest) |
-| `npm run test:watch` | Run frontend tests in watch mode |
+| `cargo build` | Build all workspace crates (debug) |
+| `cargo build --release` | Build optimized release binary |
+| `cargo run` | Build and run the application |
+| `cargo test --workspace` | Run all tests across both crates |
+| `cargo clippy --workspace` | Run the Clippy linter on all crates |
+| `cargo fmt --all` | Format all Rust code |
+| `cargo doc --workspace --open` | Generate and open API documentation |
 
-### Rust Commands
-
-```bash
-# Run Rust tests
-cargo test --manifest-path src-rust/Cargo.toml
-
-# Run Clippy linter
-cargo clippy --manifest-path src-rust/Cargo.toml
-
-# Format Rust code
-cargo fmt --manifest-path src-rust/Cargo.toml
-```
-
-### Type Checking
-
-The project has two separate TypeScript configurations. The renderer (React app) uses `tsconfig.json` and the Electron main process uses `tsconfig.node.json`:
+### Building Individual Crates
 
 ```bash
-npx tsc --noEmit                        # Type check the renderer
-npx tsc -p tsconfig.node.json --noEmit  # Type check Electron main process
+# Engine library only
+cargo build -p gosh-fetch-engine
+cargo test -p gosh-fetch-engine
+
+# GUI application only
+cargo build -p gosh-fetch
 ```
 
 ## Project Structure
 
 ```
 Gosh-Fetch/
-├── src/                          # Frontend (React 19 + TypeScript)
-│   ├── App.tsx                   # Root component, routing, event handling
-│   ├── App.css                   # Global design system (CSS variables)
-│   ├── main.tsx                  # Entry point (HashRouter)
-│   ├── pages/
-│   │   ├── Downloads.tsx         # Active downloads with filtering
-│   │   ├── History.tsx           # Completed download history
-│   │   ├── Settings.tsx          # All configuration options
-│   │   ├── Statistics.tsx        # Download statistics
-│   │   ├── Scheduler.tsx         # Bandwidth scheduling rules
-│   │   └── About.tsx             # Application info (not routed)
-│   ├── components/
-│   │   ├── downloads/
-│   │   │   ├── AddDownloadModal.tsx
-│   │   │   ├── DownloadCard.tsx
-│   │   │   ├── CompactDownloadRow.tsx
-│   │   │   ├── SortableDownloadCard.tsx
-│   │   │   └── TorrentFilePicker.tsx
-│   │   ├── layout/
-│   │   │   ├── Sidebar.tsx
-│   │   │   ├── StatusBar.tsx
-│   │   │   └── NotificationDropdown.tsx
-│   │   ├── settings/             # Settings sub-components
-│   │   ├── updater/              # Auto-update toast and modal
-│   │   └── Onboarding.tsx        # First-run onboarding flow
-│   ├── store/                    # Redux Toolkit slices
-│   │   ├── store.ts              # Store configuration
-│   │   ├── downloadSlice.ts      # Downloads (createEntityAdapter)
-│   │   ├── statsSlice.ts         # Global stats + connection status
-│   │   ├── themeSlice.ts         # Theme (dark/light/system)
-│   │   ├── notificationSlice.ts  # In-app notifications
-│   │   ├── updaterSlice.ts       # Auto-update state
-│   │   └── orderSlice.ts         # Download queue ordering
-│   └── lib/
-│       ├── api.ts                # IPC bridge to Rust sidecar
-│       ├── types/
-│       │   ├── download.ts       # Download, DownloadOptions, etc.
-│       │   └── electron.d.ts     # Window.electronAPI declarations
-│       └── utils/
-│           └── format.ts         # Formatting utilities
+├── Cargo.toml                        # Workspace root
+├── crates/
+│   ├── engine/                       # gosh-fetch-engine library crate
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs                # Public API exports
+│   │   │   ├── state.rs              # AppState (engine, database, adapter)
+│   │   │   ├── types.rs              # Shared types (Download, DownloadOptions, GlobalStat, etc.)
+│   │   │   ├── engine_adapter.rs     # gosh-dl integration and type conversion
+│   │   │   ├── error.rs              # Error types (thiserror)
+│   │   │   ├── constants.rs          # Engine name, version, default user agent
+│   │   │   ├── validation.rs         # URL and path validation
+│   │   │   ├── utils.rs              # TrackerUpdater
+│   │   │   ├── db/
+│   │   │   │   └── mod.rs            # SQLite database (rusqlite), Settings struct
+│   │   │   └── commands/             # Public command functions
+│   │   │       ├── mod.rs
+│   │   │       ├── download.rs       # Add, pause, resume, remove, query downloads
+│   │   │       ├── torrent.rs        # Torrent/magnet operations, parsing
+│   │   │       ├── settings.rs       # Settings management, engine config, trackers
+│   │   │       ├── database.rs       # Database read/write (history, settings)
+│   │   │       └── system.rs         # App info, file/folder opening, paths
+│   │   └── migrations/
+│   │       └── 001_initial.sql       # Database schema
+│   │
+│   └── gui/                          # gosh-fetch GTK4 application
+│       ├── Cargo.toml
+│       └── src/
+│           ├── main.rs               # Entry point, creates AdwApplication
+│           ├── app.rs                # GoshFetchApplication (GObject subclass)
+│           ├── engine_bridge.rs      # mpsc bridge between GTK and tokio runtime
+│           ├── model.rs              # AppModel (shared state, replaces Redux)
+│           ├── shortcuts.rs          # Keyboard shortcut definitions
+│           ├── css/
+│           │   └── style.css         # Application stylesheet
+│           ├── pages/
+│           │   ├── downloads.rs      # Active downloads with filtering
+│           │   ├── history.rs        # Completed download history
+│           │   ├── settings.rs       # All configuration options
+│           │   ├── statistics.rs     # Download statistics
+│           │   └── scheduler.rs      # Bandwidth scheduling rules
+│           ├── widgets/
+│           │   ├── window.rs         # GoshFetchWindow (main application window)
+│           │   ├── sidebar.rs        # Navigation sidebar with disk space
+│           │   ├── status_bar.rs     # Bottom status bar
+│           │   ├── download_card.rs  # Expanded download card widget
+│           │   ├── compact_download_row.rs  # Compact download row widget
+│           │   └── notification_dropdown.rs # Notification popup
+│           └── dialogs/
+│               ├── add_download.rs   # Add download dialog
+│               ├── onboarding.rs     # First-run onboarding
+│               └── torrent_picker.rs # Torrent file selection dialog
 │
-├── src-electron/                 # Electron main process
-│   ├── main.ts                   # App lifecycle, IPC, tray, menu, auto-update
-│   ├── preload.ts                # Context bridge (electronAPI)
-│   ├── sidecar.ts                # Rust sidecar process management
-│   ├── tray-popup.html           # Tray popup window
-│   └── tray-popup-preload.ts     # Tray popup preload script
-│
-├── src-rust/                     # Rust sidecar engine
-│   ├── src/
-│   │   ├── main.rs               # Entry point, initializes state and RPC server
-│   │   ├── lib.rs                # Module exports
-│   │   ├── rpc_server.rs         # JSON-RPC server (stdin/stdout)
-│   │   ├── state.rs              # AppState (engine, DB, adapter, settings)
-│   │   ├── types.rs              # Frontend-facing types (Download, GlobalStat, etc.)
-│   │   ├── engine_adapter.rs     # gosh-dl integration and type conversion
-│   │   ├── error.rs              # Error types with JSON-RPC error codes
-│   │   ├── utils.rs              # TrackerUpdater
-│   │   ├── db/
-│   │   │   └── mod.rs            # SQLite database operations
-│   │   └── commands/             # RPC command handlers
-│   │       ├── mod.rs
-│   │       ├── download.rs       # Add, pause, resume, remove downloads
-│   │       ├── torrent.rs        # Torrent/magnet operations
-│   │       ├── settings.rs       # Configuration and engine settings
-│   │       ├── database.rs       # Database queries (history, settings)
-│   │       └── system.rs         # App info, file ops, window control
-│   └── migrations/
-│       └── 001_initial.sql       # Database schema
-│
-├── public/fonts/                 # Self-hosted fonts (Space Grotesk, Material Symbols)
-├── docs/                         # Documentation
-├── electron-builder.yml          # electron-builder configuration
-└── package.json
+├── data/
+│   └── com.goshapps.downloader.desktop  # Desktop entry file
+├── docs/                             # Documentation
+└── LICENSE
 ```
 
 ## Code Style
 
-### TypeScript / React
-
-The frontend uses React 19 with TypeScript. State management is handled by Redux Toolkit using `createSlice` and `createEntityAdapter`. Routing uses React Router with `HashRouter`.
-
-Styling is done through CSS variables defined in `src/App.css` -- the project does not use Tailwind or CSS-in-JS. Icons are primarily Material Symbols Outlined, loaded as a self-hosted woff2 font. Some legacy components still use lucide-react icons.
-
-Follow the existing patterns: functional components, hooks, and the established file organization. If you are adding a new page, add its route in `App.tsx` and a nav entry in `Sidebar.tsx`.
-
 ### Rust
 
-The Rust code uses async/await with Tokio throughout. Database operations use `tokio::task::spawn_blocking` to avoid blocking the runtime. Run `cargo fmt` and `cargo clippy` before committing.
+The entire codebase is Rust. Run `cargo fmt --all` and `cargo clippy --workspace` before committing. The workspace uses Rust 2021 edition.
 
-The JSON-RPC interface in `rpc_server.rs` dispatches to command handlers in `commands/`. If you add a new RPC method, you also need to add it to the `ALLOWED_RPC_METHODS` set in `src-electron/main.ts` and expose it through `src/lib/api.ts`.
+### GTK4 Patterns
 
-## Adding a New RPC Method
+The GUI follows standard gtk4-rs conventions:
 
-The IPC chain has three links. All three must be updated for a new method to work:
+- **GObject subclassing** -- Custom widgets use the `glib::wrapper!` / `ObjectSubclass` pattern with an `imp` module for private data. See `app.rs` and `widgets/window.rs` for examples.
+- **Signals and properties** -- Widgets communicate through GObject signals. The `AppModel` holds shared application state and notifies widgets of changes.
+- **CSS styling** -- All visual styling uses GTK CSS loaded from `src/css/style.css` via `CssProvider`. There is no inline styling.
+- **Async operations** -- The GTK main thread must never block. All engine operations go through the `EngineBridge`, which sends commands to a background Tokio runtime via `mpsc` channels. Results return to the main thread via `async-channel` and are processed in `glib::spawn_future_local`.
+- **libadwaita** -- The application uses `adw::Application` as its base class for adaptive layout and GNOME integration. Widgets use Adwaita style classes where appropriate.
 
-1. **Rust handler** -- Add the method match arm in `src-rust/src/rpc_server.rs` and implement the handler in the appropriate `commands/` module.
-2. **Electron allowlist** -- Add the method name to `ALLOWED_RPC_METHODS` in `src-electron/main.ts`.
-3. **Frontend API** -- Add a wrapper function in `src/lib/api.ts`.
+### Engine Library
+
+The engine crate (`gosh-fetch-engine`) is a pure Rust library with no GTK dependencies. It exposes its API through the `commands` module, which contains async functions that take `&AppState` and return `Result<T>`. The `AppState` struct manages the download engine, database, and adapter lifecycle.
+
+Key conventions:
+- Database operations use `spawn_blocking` to avoid blocking the Tokio runtime.
+- The `EngineAdapter` converts between gosh-dl internal types and the frontend-facing types in `types.rs`.
+- Error handling uses `thiserror` with the `Error` enum in `error.rs`.
+- Input validation (URLs, file paths) is handled by `validation.rs` before reaching the engine.
+
+### Adding a New Engine Command
+
+1. Add the command function in the appropriate `commands/` module (e.g., `download.rs`, `settings.rs`).
+2. Re-export it from `commands/mod.rs`.
+3. Add a variant to `EngineCommand` in `crates/gui/src/engine_bridge.rs`.
+4. Handle the new variant in the `engine_loop` match block in `engine_bridge.rs`.
+5. Optionally add a convenience method on `EngineBridge` for ergonomic use from widgets.
 
 ## Pull Request Process
 
@@ -183,10 +181,9 @@ git checkout -b feature/your-feature-name
 
 3. Ensure everything passes:
 ```bash
-npm test
-npx tsc --noEmit
-cargo test --manifest-path src-rust/Cargo.toml
-cargo clippy --manifest-path src-rust/Cargo.toml
+cargo test --workspace
+cargo clippy --workspace
+cargo fmt --all -- --check
 ```
 
 4. Commit with a descriptive message:
@@ -207,7 +204,7 @@ git commit -m "Add: brief description of changes"
 
 ## Reporting Issues
 
-When reporting an issue, include your operating system and version, steps to reproduce the problem, what you expected versus what actually happened, and any error messages or logs. Electron logs can be found via `--enable-logging` or in the DevTools console (`Ctrl+Shift+I`).
+When reporting an issue, include your operating system and version, GTK4/libadwaita versions (`pkg-config --modversion gtk4 libadwaita-1`), steps to reproduce the problem, what you expected versus what actually happened, and any error messages or logs. You can enable debug logging by running the application with `RUST_LOG=debug cargo run`.
 
 ## License
 

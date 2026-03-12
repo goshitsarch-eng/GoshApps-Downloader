@@ -1,12 +1,20 @@
 //! Download card widget showing progress, speed, ETA, and action buttons.
 
 use adw::prelude::*;
+use gtk::{gdk, gio};
 use gosh_fetch_engine::types::{Download, DownloadState, DownloadType};
 
 use crate::engine_bridge::EngineBridge;
 use crate::widgets::status_bar::format_speed;
 
 pub fn build_download_card(download: &Download, bridge: &EngineBridge) -> gtk::Box {
+    let status_class = match download.status {
+        DownloadState::Active => "download-status-active",
+        DownloadState::Paused => "download-status-paused",
+        DownloadState::Error => "download-status-error",
+        DownloadState::Complete => "download-status-complete",
+        _ => "card",
+    };
     let card = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(8)
@@ -14,14 +22,22 @@ pub fn build_download_card(download: &Download, bridge: &EngineBridge) -> gtk::B
         .margin_end(12)
         .margin_top(8)
         .margin_bottom(8)
-        .css_classes(["card"])
+        .css_classes(["card", status_class])
         .build();
 
-    // Top row: icon + name + type badge
+    // Top row: drag handle + icon + name + type badge
     let top_row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
         .build();
+
+    // Drag handle for reordering
+    let drag_handle = gtk::Image::builder()
+        .icon_name("list-drag-handle-symbolic")
+        .tooltip_text("Drag to reorder")
+        .css_classes(["dim-label"])
+        .build();
+    top_row.append(&drag_handle);
 
     let icon_name = match download.download_type {
         DownloadType::Http => "document-save-symbolic",
@@ -57,8 +73,14 @@ pub fn build_download_card(download: &Download, bridge: &EngineBridge) -> gtk::B
     };
     let progress_bar = gtk::ProgressBar::builder()
         .fraction(progress)
-        .show_text(false)
+        .show_text(true)
+        .text(&format!("{:.1}%", progress * 100.0))
         .build();
+    match download.status {
+        DownloadState::Active => progress_bar.add_css_class("active"),
+        DownloadState::Paused => progress_bar.add_css_class("paused"),
+        _ => {}
+    }
     card.append(&progress_bar);
 
     // Info row: size + speed + ETA
@@ -163,6 +185,86 @@ pub fn build_download_card(download: &Download, bridge: &EngineBridge) -> gtk::B
     action_row.append(&remove_btn);
 
     card.append(&action_row);
+
+    // Right-click context menu
+    let menu = gio::Menu::new();
+    match download.status {
+        DownloadState::Active => {
+            menu.append(Some("Pause"), Some("download.pause"));
+        }
+        DownloadState::Paused | DownloadState::Error => {
+            menu.append(Some("Resume"), Some("download.resume"));
+        }
+        _ => {}
+    }
+    menu.append(Some("Open Folder"), Some("download.open-folder"));
+    menu.append(Some("Copy URL"), Some("download.copy-url"));
+    menu.append(Some("Remove"), Some("download.remove"));
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.set_parent(&card);
+
+    // Context menu actions
+    let action_group = gio::SimpleActionGroup::new();
+
+    let pause_action = gio::SimpleAction::new("pause", None);
+    {
+        let gid = download.gid.clone();
+        let bridge = bridge.clone();
+        pause_action.connect_activate(move |_, _| bridge.pause_download(&gid));
+    }
+    action_group.add_action(&pause_action);
+
+    let resume_action = gio::SimpleAction::new("resume", None);
+    {
+        let gid = download.gid.clone();
+        let bridge = bridge.clone();
+        resume_action.connect_activate(move |_, _| bridge.resume_download(&gid));
+    }
+    action_group.add_action(&resume_action);
+
+    let open_action = gio::SimpleAction::new("open-folder", None);
+    {
+        let path = download.save_path.clone();
+        let bridge = bridge.clone();
+        open_action.connect_activate(move |_, _| bridge.open_folder(path.clone()));
+    }
+    action_group.add_action(&open_action);
+
+    let copy_action = gio::SimpleAction::new("copy-url", None);
+    {
+        let url = download.url.clone().unwrap_or_default();
+        copy_action.connect_activate(move |_, _| {
+            if let Some(display) = gdk::Display::default() {
+                display.clipboard().set_text(&url);
+            }
+        });
+    }
+    action_group.add_action(&copy_action);
+
+    let remove_action = gio::SimpleAction::new("remove", None);
+    {
+        let gid = download.gid.clone();
+        let bridge = bridge.clone();
+        remove_action.connect_activate(move |_, _| bridge.remove_download(&gid, false));
+    }
+    action_group.add_action(&remove_action);
+
+    card.insert_action_group("download", Some(&action_group));
+
+    // Right-click gesture
+    let click = gtk::GestureClick::builder()
+        .button(3) // right-click
+        .build();
+    {
+        let popover = popover.clone();
+        click.connect_pressed(move |gesture, _, x, y| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.popup();
+        });
+    }
+    card.add_controller(click);
 
     card
 }

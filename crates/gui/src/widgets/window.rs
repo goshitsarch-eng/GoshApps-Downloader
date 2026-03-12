@@ -33,7 +33,11 @@ fn save_window_state(window: &adw::ApplicationWindow) {
             "maximized": maximized,
         });
         if let Ok(json) = serde_json::to_string_pretty(&state) {
-            let _ = std::fs::write(dir.join("window-state.json"), json);
+            // Write to temp file then rename for atomicity
+            let tmp_path = dir.join("window-state.json.tmp");
+            if std::fs::write(&tmp_path, &json).is_ok() {
+                let _ = std::fs::rename(&tmp_path, dir.join("window-state.json"));
+            }
         }
     }
 }
@@ -100,6 +104,7 @@ impl GoshFetchWindow {
         let add_button = gtk::Button::builder()
             .icon_name("list-add-symbolic")
             .tooltip_text("Add Download (Ctrl+N)")
+            .css_classes(["suggested-action"])
             .build();
         {
             let model_clone = model.clone();
@@ -114,6 +119,18 @@ impl GoshFetchWindow {
             });
         }
         header_bar.pack_start(&add_button);
+
+        // Hamburger menu
+        let app_menu = gio::Menu::new();
+        app_menu.append(Some("Keyboard Shortcuts"), Some("win.show-shortcuts"));
+        app_menu.append(Some("Preferences"), Some("win.open-settings"));
+        app_menu.append(Some("About"), Some("win.show-about"));
+        let menu_button = gtk::MenuButton::builder()
+            .icon_name("open-menu-symbolic")
+            .menu_model(&app_menu)
+            .tooltip_text("Menu")
+            .build();
+        header_bar.pack_end(&menu_button);
 
         // Notification bell
         let notif_button = widgets::notification_dropdown::build_notification_button(&model);
@@ -262,4 +279,48 @@ fn setup_window_actions(
         // TODO: Select all downloads on the current page
     });
     window.add_action(&action_select_all);
+
+    // Action: show-shortcuts (simple dialog showing keybindings)
+    let action_shortcuts = gio::SimpleAction::new("show-shortcuts", None);
+    {
+        let window = window.clone();
+        action_shortcuts.connect_activate(move |_, _| {
+            let dialog = adw::MessageDialog::builder()
+                .heading("Keyboard Shortcuts")
+                .body(
+                    "Ctrl+N    Add download\n\
+                     Ctrl+K    Focus search\n\
+                     Ctrl+,    Open settings\n\
+                     Ctrl+A    Select all\n\
+                     Ctrl+Q    Quit"
+                )
+                .modal(true)
+                .transient_for(&window)
+                .build();
+            dialog.add_response("close", "Close");
+            dialog.set_default_response(Some("close"));
+            dialog.present();
+        });
+    }
+    window.add_action(&action_shortcuts);
+
+    // Action: show-about
+    let action_about = gio::SimpleAction::new("show-about", None);
+    {
+        let window = window.clone();
+        action_about.connect_activate(move |_, _| {
+            let about = adw::AboutDialog::builder()
+                .application_name("Goshapps Downloader")
+                .application_icon("com.goshapps.downloader")
+                .version("3.0.0")
+                .developer_name("Gosh")
+                .license_type(gtk::License::Agpl30)
+                .website("https://github.com/goshitsarch-eng/Gosh-Fetch")
+                .issue_url("https://github.com/goshitsarch-eng/Gosh-Fetch/issues")
+                .build();
+            about.add_credit_section(Some("Download Engine"), &["gosh-dl (MIT)"]);
+            about.present(Some(&window));
+        });
+    }
+    window.add_action(&action_about);
 }

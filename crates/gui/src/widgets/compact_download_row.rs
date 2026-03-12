@@ -15,16 +15,29 @@ pub fn build_compact_row(download: &Download, bridge: &EngineBridge) -> gtk::Box
         .margin_bottom(4)
         .build();
 
-    // Status icon
-    let icon_name = match download.status {
-        DownloadState::Paused => "media-playback-pause-symbolic",
-        DownloadState::Complete => "emblem-ok-symbolic",
-        DownloadState::Error => "dialog-error-symbolic",
-        DownloadState::Waiting => "content-loading-symbolic",
-        _ => "document-save-symbolic",
+    // Status icon with explicit size and tooltip
+    let (icon_name, status_text) = match download.status {
+        DownloadState::Paused => ("media-playback-pause-symbolic", "Paused"),
+        DownloadState::Complete => ("emblem-ok-symbolic", "Complete"),
+        DownloadState::Error => ("dialog-error-symbolic", "Error"),
+        DownloadState::Waiting => ("content-loading-symbolic", "Queued"),
+        DownloadState::Active => ("document-save-symbolic", "Active"),
+        DownloadState::Removed => ("edit-delete-symbolic", "Removed"),
     };
-    let icon = gtk::Image::from_icon_name(icon_name);
+    let icon = gtk::Image::builder()
+        .icon_name(icon_name)
+        .pixel_size(20)
+        .tooltip_text(status_text)
+        .build();
     row.append(&icon);
+
+    // Status label
+    let status_label = gtk::Label::builder()
+        .label(status_text)
+        .css_classes(["caption", "dim-label"])
+        .width_chars(8)
+        .build();
+    row.append(&status_label);
 
     // Name
     let name = gtk::Label::builder()
@@ -52,6 +65,7 @@ pub fn build_compact_row(download: &Download, bridge: &EngineBridge) -> gtk::Box
         DownloadState::Paused | DownloadState::Error => {
             let resume_btn = gtk::Button::builder()
                 .icon_name("media-playback-start-symbolic")
+                .tooltip_text("Resume")
                 .css_classes(["flat", "circular"])
                 .build();
             let gid = download.gid.clone();
@@ -66,6 +80,7 @@ pub fn build_compact_row(download: &Download, bridge: &EngineBridge) -> gtk::Box
 
     let remove_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
+        .tooltip_text("Remove")
         .css_classes(["flat", "circular"])
         .build();
     {

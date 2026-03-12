@@ -343,7 +343,10 @@ fn draw_speed_line(
     }
 
     // Close fill path
-    let last_x = points.last().unwrap().0;
+    let last_x = match points.last() {
+        Some(p) => p.0,
+        None => return,
+    };
     cr.line_to(last_x, baseline_y);
     cr.close_path();
 

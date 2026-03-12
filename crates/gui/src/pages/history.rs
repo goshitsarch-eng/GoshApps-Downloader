@@ -30,8 +30,8 @@ pub fn build_history_page(model: &AppModel, bridge: &EngineBridge) -> gtk::Box {
         .build();
     toolbar.append(&search_entry);
 
-    // Category filter
-    let categories = ["All", "Documents", "Software", "Media", "Torrents"];
+    // Category filter — uses same categories as downloads page
+    let categories = crate::DOWNLOAD_CATEGORIES;
     let category_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(4)
@@ -39,7 +39,7 @@ pub fn build_history_page(model: &AppModel, bridge: &EngineBridge) -> gtk::Box {
         .build();
     let active_category: Rc<RefCell<String>> = Rc::new(RefCell::new("All".to_string()));
 
-    for cat in &categories {
+    for cat in categories {
         let btn = gtk::ToggleButton::builder()
             .label(*cat)
             .css_classes(["flat"])

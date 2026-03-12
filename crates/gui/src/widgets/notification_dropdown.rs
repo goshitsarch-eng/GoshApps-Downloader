@@ -112,14 +112,17 @@ pub fn build_notification_button(model: &AppModel) -> gtk::MenuButton {
                 list_box.append(&row);
             }
 
-            // Update badge
+            // Update badge with unread count
             let unread = model.unread_count();
             if unread > 0 {
                 button.set_icon_name("bell-symbolic");
-                button.set_tooltip_text(Some(&format!("{} unread notifications", unread)));
+                button.set_tooltip_text(Some(&format!("{} unread notification{}", unread, if unread == 1 { "" } else { "s" })));
+                // Update the button label to show count
+                button.set_label(&unread.to_string());
             } else {
                 button.set_icon_name("bell-outline-symbolic");
                 button.set_tooltip_text(Some("Notifications"));
+                button.set_label("");
             }
         });
     }

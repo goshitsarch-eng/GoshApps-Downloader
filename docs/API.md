@@ -1,23 +1,25 @@
-# Gosh-Fetch API Reference
+# Gosh-Fetch Engine API Reference
 
-This document covers the IPC methods available between the React frontend and the Rust sidecar, along with the Electron-specific IPC methods handled by the main process.
+This document covers the public Rust API of the `gosh-fetch-engine` library crate. The GUI application calls these functions through the `EngineBridge` channel mechanism, but they can also be used directly by any Rust code that has an `AppState` instance.
 
-All frontend calls go through `window.electronAPI.invoke(method, params)`, which is defined in the preload script and wraps `ipcRenderer.invoke('rpc-invoke', method, params)`. The convenience wrappers in `src/lib/api.ts` provide typed access to every method.
-
-## RPC Methods (Sidecar)
-
-These methods are forwarded from the Electron main process to the Rust sidecar via JSON-RPC over stdin/stdout. Each must appear in the `ALLOWED_RPC_METHODS` set in `src-electron/main.ts`.
+All command functions live in `crates/engine/src/commands/` and are re-exported from `gosh_fetch_engine::commands`.
 
 ---
 
-### Download Commands
+## Download Commands
+
+Defined in `commands/download.rs`.
 
 #### add_download
 
-Add an HTTP/HTTPS download. URLs are validated server-side: only `http://`, `https://`, and `magnet:` schemes are accepted, private IPs are blocked, and the maximum URL length is 8192 characters.
+Add an HTTP/HTTPS download. URLs are validated before reaching the engine: only `http://`, `https://`, and `magnet:` schemes are accepted, private IPs are blocked, and the maximum URL length is 8192 characters.
 
-```typescript
-api.addDownload(url: string, options?: DownloadOptions): Promise<string>
+```rust
+pub async fn add_download(
+    state: &AppState,
+    url: String,
+    options: Option<DownloadOptions>,
+) -> Result<String>
 ```
 
 Returns the download GID (a unique identifier string).
@@ -26,595 +28,620 @@ Returns the download GID (a unique identifier string).
 
 Add multiple downloads at once. All URLs are validated.
 
-```typescript
-api.addUrls(urls: string[], options?: DownloadOptions): Promise<string[]>
+```rust
+pub async fn add_urls(
+    state: &AppState,
+    urls: Vec<String>,
+    options: Option<DownloadOptions>,
+) -> Result<Vec<String>>
 ```
 
-Returns an array of GIDs.
+Returns a vector of GIDs.
 
 #### pause_download
 
-```typescript
-api.pauseDownload(gid: string): Promise<void>
+```rust
+pub async fn pause_download(state: &AppState, gid: String) -> Result<()>
 ```
 
 #### pause_all
 
-```typescript
-api.pauseAll(): Promise<void>
+```rust
+pub async fn pause_all(state: &AppState) -> Result<()>
 ```
 
 #### resume_download
 
-```typescript
-api.resumeDownload(gid: string): Promise<void>
+```rust
+pub async fn resume_download(state: &AppState, gid: String) -> Result<()>
 ```
 
 #### resume_all
 
-```typescript
-api.resumeAll(): Promise<void>
+```rust
+pub async fn resume_all(state: &AppState) -> Result<()>
 ```
 
 #### remove_download
 
-```typescript
-api.removeDownload(gid: string, deleteFiles?: boolean): Promise<void>
+```rust
+pub async fn remove_download(
+    state: &AppState,
+    gid: String,
+    delete_files: bool,
+) -> Result<()>
 ```
 
-If `deleteFiles` is true, the downloaded file is deleted from disk.
+If `delete_files` is true, the downloaded file is deleted from disk.
 
 #### get_download_status
 
-```typescript
-api.getDownloadStatus(gid: string): Promise<Download>
+```rust
+pub async fn get_download_status(state: &AppState, gid: String) -> Result<Download>
 ```
+
+Returns `Error::NotFound` if the GID does not exist.
 
 #### get_all_downloads
 
-```typescript
-api.getAllDownloads(): Promise<Download[]>
+```rust
+pub async fn get_all_downloads(state: &AppState) -> Result<Vec<Download>>
 ```
 
 Returns all downloads including active, waiting, paused, and error states.
 
 #### get_active_downloads
 
-```typescript
-api.getActiveDownloads(): Promise<Download[]>
+```rust
+pub async fn get_active_downloads(state: &AppState) -> Result<Vec<Download>>
 ```
 
 #### get_global_stats
 
-```typescript
-api.getGlobalStats(): Promise<GlobalStats>
+```rust
+pub async fn get_global_stats(state: &AppState) -> Result<GlobalStat>
 ```
 
 #### set_speed_limit
 
-```typescript
-api.setSpeedLimit(downloadLimit?: number, uploadLimit?: number): Promise<void>
+```rust
+pub async fn set_speed_limit(
+    state: &AppState,
+    download_limit: Option<u64>,
+    upload_limit: Option<u64>,
+) -> Result<()>
 ```
 
-Values are in bytes per second. Omit or pass `null` for unlimited.
+Values are in bytes per second. Pass `None` for unlimited.
 
 ---
 
-### Torrent Commands
+## Torrent Commands
+
+Defined in `commands/torrent.rs`.
 
 #### add_torrent_file
 
-Add a download from a `.torrent` file. The file path is validated: it must end with `.torrent` and exist on disk.
+Add a download from a `.torrent` file. The file is read from disk and passed to the engine.
 
-```typescript
-api.addTorrentFile(filePath: string, options?: DownloadOptions): Promise<string>
+```rust
+pub async fn add_torrent_file(
+    state: &AppState,
+    file_path: String,
+    options: Option<DownloadOptions>,
+) -> Result<String>
 ```
 
 #### add_magnet
 
-```typescript
-api.addMagnet(magnetUri: string, options?: DownloadOptions): Promise<string>
+```rust
+pub async fn add_magnet(
+    state: &AppState,
+    magnet_uri: String,
+    options: Option<DownloadOptions>,
+) -> Result<String>
 ```
 
 #### get_torrent_files
 
 Get the file list for a torrent download.
 
-```typescript
-api.getTorrentFiles(gid: string): Promise<DownloadFile[]>
+```rust
+pub async fn get_torrent_files(
+    state: &AppState,
+    gid: String,
+) -> Result<Vec<DownloadFile>>
 ```
 
 #### select_torrent_files
 
-Select which files to download from a multi-file torrent.
+Select which files to download from a multi-file torrent. Currently returns an error because gosh-dl does not support post-add file selection. File selection must be specified when adding the torrent via `DownloadOptions::select_file`.
 
-```typescript
-api.selectTorrentFiles(gid: string, fileIndices: number[]): Promise<void>
+```rust
+pub async fn select_torrent_files(
+    state: &AppState,
+    gid: String,
+    file_indices: Vec<u32>,
+) -> Result<()>
 ```
 
 #### parse_torrent_file
 
-Parse a `.torrent` file without adding it as a download. Useful for previewing contents.
+Parse a `.torrent` file without adding it as a download. Useful for previewing contents in the UI before the user confirms.
 
-```typescript
-api.parseTorrentFile(filePath: string): Promise<TorrentInfo>
+```rust
+pub fn parse_torrent_file(file_path: String) -> Result<TorrentInfo>
 ```
+
+Note: this is a synchronous function (no `async`).
 
 #### parse_magnet_uri
 
 Parse a magnet URI without adding it.
 
-```typescript
-api.parseMagnetUri(magnetUri: string): Promise<MagnetInfo>
+```rust
+pub fn parse_magnet_uri(magnet_uri: String) -> Result<MagnetInfo>
 ```
+
+Note: this is a synchronous function (no `async`).
 
 #### get_peers
 
 Get connected peer information for a torrent download.
 
-```typescript
-api.getPeers(gid: string): Promise<PeerInfo[]>
+```rust
+pub async fn get_peers(state: &AppState, gid: String) -> Result<Vec<serde_json::Value>>
 ```
+
+Each peer is returned as a JSON value with fields: `ip`, `port`, `client`, `downloadSpeed`, `uploadSpeed`.
 
 ---
 
-### Settings Commands
+## Settings Commands
+
+Defined in `commands/settings.rs`.
 
 #### get_settings
 
-Get the current runtime settings from the engine.
+Get the current settings from the database.
 
-```typescript
-api.getSettings(): Promise<Settings>
+```rust
+pub async fn get_settings(state: &AppState) -> Result<Settings>
 ```
 
 #### update_settings
 
-Update all settings at once.
+Persist settings to the database.
 
-```typescript
-api.updateSettings(settings: Settings): Promise<void>
+```rust
+pub async fn update_settings(state: &AppState, settings: Settings) -> Result<()>
 ```
 
 #### apply_settings_to_engine
 
-Apply settings to the running download engine. Call this after saving settings to make them take effect immediately.
+Apply settings to the running download engine. Call this after saving settings to make them take effect immediately without restarting.
 
-```typescript
-api.applySettingsToEngine(settings: Settings): Promise<void>
+```rust
+pub async fn apply_settings_to_engine(
+    state: &AppState,
+    settings: Settings,
+) -> Result<()>
 ```
 
 #### set_close_to_tray
 
-```typescript
-api.setCloseToTray(value: boolean): Promise<void>
+```rust
+pub fn set_close_to_tray(state: &AppState, value: bool)
 ```
 
 #### set_user_agent
 
-```typescript
-api.setUserAgent(userAgent: string): Promise<void>
+Update the user agent on the running engine.
+
+```rust
+pub async fn set_user_agent(state: &AppState, user_agent: String) -> Result<()>
 ```
 
 #### get_user_agent_presets
 
-Returns an array of `[name, userAgentString]` tuples. Available presets: gosh-dl (default), Chrome (Windows), Chrome (macOS), Firefox (Windows), Firefox (Linux), Wget, Curl.
+Returns a list of `(name, user_agent_string)` tuples. Available presets: gosh-dl (default), Chrome (Windows), Chrome (macOS), Firefox (Windows), Firefox (Linux), Wget, Curl.
 
-```typescript
-api.getUserAgentPresets(): Promise<[string, string][]>
+```rust
+pub fn get_user_agent_presets() -> Vec<(String, String)>
 ```
 
 #### get_tracker_list
 
-Fetch the cached tracker list. If the cache is stale, fetches from the remote source.
+Fetch the cached tracker list. If the cache is stale, fetches from the remote source first.
 
-```typescript
-api.getTrackerList(): Promise<string[]>
+```rust
+pub async fn get_tracker_list(state: &AppState) -> Result<Vec<String>>
 ```
 
 #### update_tracker_list
 
 Force-fetch and update the tracker list from the remote source.
 
-```typescript
-api.updateTrackerList(): Promise<string[]>
+```rust
+pub async fn update_tracker_list(state: &AppState) -> Result<Vec<String>>
 ```
 
 ---
 
-### Priority and Scheduling
+## Database Commands
 
-#### set_priority
-
-Set the download priority for a specific download.
-
-```typescript
-api.setPriority(gid: string, priority: string): Promise<void>
-```
-
-Priority values: `"low"`, `"normal"`, `"high"`, `"critical"`.
-
-#### get_schedule_rules
-
-```typescript
-api.getScheduleRules(): Promise<ScheduleRule[]>
-```
-
-#### set_schedule_rules
-
-```typescript
-api.setScheduleRules(rules: ScheduleRule[]): Promise<void>
-```
-
----
-
-### Database Commands
-
-These methods read from and write to the SQLite database directly, bypassing the download engine.
+Defined in `commands/database.rs`. These methods read from and write to the SQLite database directly, bypassing the download engine.
 
 #### db_get_completed_history
 
-```typescript
-api.dbGetCompletedHistory(): Promise<Download[]>
+```rust
+pub async fn db_get_completed_history(state: &AppState) -> Result<Vec<Download>>
 ```
 
 #### db_save_download
 
-```typescript
-api.dbSaveDownload(download: Download): Promise<void>
+```rust
+pub async fn db_save_download(state: &AppState, download: Download) -> Result<()>
 ```
 
 #### db_remove_download
 
-```typescript
-api.dbRemoveDownload(gid: string): Promise<void>
+```rust
+pub async fn db_remove_download(state: &AppState, gid: String) -> Result<()>
 ```
 
 #### db_clear_history
 
-```typescript
-api.dbClearHistory(): Promise<void>
+```rust
+pub async fn db_clear_history(state: &AppState) -> Result<()>
 ```
 
 #### db_get_settings
 
-```typescript
-api.dbGetSettings(): Promise<Settings>
+```rust
+pub async fn db_get_settings(state: &AppState) -> Result<Settings>
 ```
 
 #### db_save_settings
 
-```typescript
-api.dbSaveSettings(settings: Settings): Promise<void>
+```rust
+pub async fn db_save_settings(state: &AppState, settings: Settings) -> Result<()>
 ```
 
 #### db_load_incomplete
 
 Load incomplete downloads from the database for restoration on app startup.
 
-```typescript
-api.dbLoadIncomplete(): Promise<Download[]>
+```rust
+pub async fn db_load_incomplete(state: &AppState) -> Result<Vec<Download>>
 ```
 
 ---
 
-### System Commands
+## System Commands
+
+Defined in `commands/system.rs`.
 
 #### get_engine_version
 
-```typescript
-api.getEngineVersion(): Promise<{ name: string; version: string; running: boolean }>
-```
-
-#### open_download_folder
-
-Open a directory in the system file manager. The path is validated and canonicalized before being passed to the OS.
-
-```typescript
-api.openDownloadFolder(path: string): Promise<void>
-```
-
-#### open_file_location
-
-Open the containing folder of a file and select it.
-
-```typescript
-api.openFileLocation(filePath: string): Promise<void>
-```
-
-#### get_default_download_path
-
-```typescript
-api.getDefaultDownloadPath(): Promise<string>
-```
-
-#### get_app_version
-
-```typescript
-api.getAppVersion(): Promise<string>
-```
-
-#### get_app_info
-
-```typescript
-api.getAppInfo(): Promise<AppInfo>
+```rust
+pub async fn get_engine_version(state: &AppState) -> Result<serde_json::Value>
 ```
 
 Returns:
 ```json
 {
-  "name": "Gosh-Fetch",
-  "version": "2.0.6",
-  "description": "...",
+  "name": "gosh-dl",
+  "version": "0.3.2",
+  "running": true
+}
+```
+
+#### open_download_folder
+
+Open a directory in the system file manager. The path is validated and canonicalized before being passed to `xdg-open` (Linux), `open` (macOS), or `explorer` (Windows).
+
+```rust
+pub fn open_download_folder(path: String) -> Result<()>
+```
+
+#### open_file_location
+
+Open the containing folder of a file.
+
+```rust
+pub fn open_file_location(file_path: String) -> Result<()>
+```
+
+#### get_default_download_path
+
+```rust
+pub fn get_default_download_path() -> String
+```
+
+Returns the platform default download directory (typically `~/Downloads`).
+
+#### get_app_version
+
+```rust
+pub fn get_app_version() -> String
+```
+
+Returns the version from `Cargo.toml`.
+
+#### get_app_info
+
+```rust
+pub fn get_app_info() -> serde_json::Value
+```
+
+Returns:
+```json
+{
+  "name": "Goshapps Downloader",
+  "version": "3.0.0",
+  "description": "Goshapps Downloader - the modern download manager powered by gosh-dl",
   "license": "AGPL-3.0",
   "repository": "https://github.com/goshitsarch-eng/Gosh-Fetch",
   "engine": {
     "name": "gosh-dl",
     "version": "0.3.2",
     "url": "https://github.com/goshitsarch-eng/gosh-dl",
-    "license": "MIT"
+    "license": "MIT",
+    "description": "A fast, safe, and reliable download engine written in Rust"
   }
 }
 ```
 
 ---
 
-## Electron-Only IPC Methods
+## Validation Functions
 
-These are handled directly by the Electron main process, not forwarded to the sidecar. They are exposed on `window.electronAPI` via the preload script.
+Defined in `validation.rs` and re-exported from the crate root.
 
-#### selectFile
+#### validate_download_url
 
-Open a native file picker dialog.
-
-```typescript
-window.electronAPI.selectFile(options?: { filters?: Array<{ name: string; extensions: string[] }> }): Promise<string | null>
+```rust
+pub fn validate_download_url(url: &str) -> Result<()>
 ```
 
-#### selectDirectory
+Validates that a URL uses an allowed scheme (`http://`, `https://`, or `magnet:`), is not empty, does not exceed 8192 characters, and does not target a private/loopback IP address.
 
-Open a native directory picker dialog.
+#### validate_torrent_path
 
-```typescript
-window.electronAPI.selectDirectory(): Promise<string | null>
+```rust
+pub fn validate_torrent_path(file_path: &str) -> Result<()>
 ```
 
-#### showNotification
-
-Show a native OS notification.
-
-```typescript
-window.electronAPI.showNotification(title: string, body: string): Promise<void>
-```
-
-#### getNativeTheme
-
-Check whether the OS is using dark mode.
-
-```typescript
-window.electronAPI.getNativeTheme(): Promise<boolean>
-```
-
-Returns `true` if the OS dark mode is active.
-
-#### getDiskSpace
-
-Get total and free disk space for a given path (defaults to the system Downloads directory).
-
-```typescript
-window.electronAPI.getDiskSpace(path?: string): Promise<{ total: number; free: number }>
-```
-
-#### setLoginItemSettings / getLoginItemSettings
-
-Configure whether the app starts at OS login.
-
-```typescript
-window.electronAPI.setLoginItemSettings(openAtLogin: boolean): Promise<void>
-window.electronAPI.getLoginItemSettings(): Promise<{ openAtLogin: boolean }>
-```
-
-#### setDefaultProtocolClient / removeDefaultProtocolClient / isDefaultProtocolClient
-
-Manage protocol handler registration (e.g., `magnet:` links).
-
-```typescript
-window.electronAPI.setDefaultProtocolClient(protocol: string): Promise<boolean>
-window.electronAPI.removeDefaultProtocolClient(protocol: string): Promise<boolean>
-window.electronAPI.isDefaultProtocolClient(protocol: string): Promise<boolean>
-```
-
-#### importSettingsFile
-
-Open a file dialog for a JSON settings file and return its parsed contents.
-
-```typescript
-window.electronAPI.importSettingsFile(): Promise<any | null>
-```
-
-#### updaterDownload / updaterInstall
-
-Control the auto-update process.
-
-```typescript
-window.electronAPI.updaterDownload(): Promise<void>
-window.electronAPI.updaterInstall(): Promise<void>
-```
-
----
-
-## Events
-
-Events flow from the sidecar and Electron main process to the renderer via `window.electronAPI.onEvent(callback)`. The callback receives `(eventName: string, data: any)`.
-
-### Sidecar Events
-
-| Event | Data | Description |
-|-------|------|-------------|
-| `global-stats` | `GlobalStats` | Emitted every second with speed/count stats |
-| `download:added` | `{ gid, name, ... }` | A new download was added |
-| `download:started` | `{ gid, ... }` | Download started actively transferring |
-| `download:progress` | `{ gid, completedSize, totalSize, speed, ... }` | Progress update |
-| `download:state-changed` | `{ gid, state, ... }` | Generic state change |
-| `download:completed` | `{ gid, name, ... }` | Download finished successfully |
-| `download:failed` | `{ gid, name, error, ... }` | Download encountered an error |
-| `download:removed` | `{ gid, ... }` | Download was removed |
-| `download:paused` | `{ gid, ... }` | Download was paused |
-| `download:resumed` | `{ gid, ... }` | Download was resumed |
-
-### Electron Events
-
-| Event | Data | Description |
-|-------|------|-------------|
-| `engine-status` | `{ connected: boolean, restarting: boolean }` | Engine connection state changed |
-| `native-theme-changed` | `{ shouldUseDarkColors: boolean }` | OS dark mode toggled |
-| `navigate` | `string` (path) | Navigate to a route (triggered from tray) |
-| `open-add-modal` | `{}` | Open the add download modal (triggered from tray) |
-| `open-magnet` | `{ uri: string }` | A magnet link was opened externally |
-| `open-torrent-file` | `{ path: string }` | A .torrent file was opened externally |
-| `update-available` | `{ version, releaseName, releaseNotes, releaseDate }` | An update is available |
-| `update-progress` | `{ total, transferred, percent, bytesPerSecond }` | Update download progress |
-| `update-downloaded` | `{}` | Update has been downloaded and is ready to install |
+Validates that a file path is not empty, ends with `.torrent`, and exists on disk.
 
 ---
 
 ## Types
 
+All types are defined in `crates/engine/src/types.rs` and re-exported from the crate root.
+
 ### DownloadOptions
 
-Configuration options when adding a download. All fields are optional.
+Configuration options when adding a download. All fields are optional. Uses `camelCase` serialization for JSON compatibility.
 
-```typescript
-interface DownloadOptions {
-  dir?: string;                    // Save directory
-  out?: string;                    // Output filename
-  split?: string;                  // Number of segments
-  maxConnectionPerServer?: string; // Connections per server
-  userAgent?: string;              // HTTP user agent
-  referer?: string;                // HTTP referer header
-  header?: string[];               // Custom headers ["Key: Value"]
-  selectFile?: string;             // Torrent file indices "1,2,3"
-  btTracker?: string;              // Additional tracker URL
-  seedRatio?: string;              // Seed ratio for torrents
-  maxDownloadLimit?: string;       // Download speed limit (bytes/sec)
-  maxUploadLimit?: string;         // Upload speed limit (bytes/sec)
-  priority?: string;               // "low" | "normal" | "high" | "critical"
-  checksum?: string;               // "sha256:hex..." or "md5:hex..."
-  mirrors?: string[];              // Mirror/failover URLs
-  sequential?: boolean;            // Sequential download mode
+```rust
+pub struct DownloadOptions {
+    pub dir: Option<String>,                    // Save directory
+    pub out: Option<String>,                    // Output filename
+    pub split: Option<String>,                  // Number of segments
+    pub max_connection_per_server: Option<String>, // Connections per server
+    pub user_agent: Option<String>,             // HTTP user agent
+    pub referer: Option<String>,                // HTTP referer header
+    pub header: Option<Vec<String>>,            // Custom headers ["Key: Value"]
+    pub select_file: Option<String>,            // Torrent file indices "1,2,3"
+    pub seed_ratio: Option<String>,             // Seed ratio for torrents
+    pub max_download_limit: Option<String>,     // Download speed limit (bytes/sec)
+    pub max_upload_limit: Option<String>,       // Upload speed limit (bytes/sec)
+    pub priority: Option<String>,               // "low" | "normal" | "high" | "critical"
+    pub checksum: Option<String>,               // "sha256:hex..." or "md5:hex..."
+    pub mirrors: Option<Vec<String>>,           // Mirror/failover URLs
+    pub sequential: Option<bool>,               // Sequential download mode
 }
 ```
 
 ### Download
 
-```typescript
-interface Download {
-  id: number;                      // Database ID
-  gid: string;                     // Engine GID (unique identifier)
-  name: string;                    // Display name
-  url: string | null;              // Source URL (HTTP downloads)
-  magnetUri: string | null;        // Magnet link (torrents)
-  infoHash: string | null;         // BitTorrent info hash
-  downloadType: 'http' | 'torrent' | 'magnet';
-  status: 'active' | 'waiting' | 'paused' | 'complete' | 'error' | 'removed';
-  appState?: AppDownloadState;     // Rich state info (retrying, stalled, etc.)
-  totalSize: number;               // Total bytes
-  completedSize: number;           // Downloaded bytes
-  downloadSpeed: number;           // Bytes per second
-  uploadSpeed: number;             // Bytes per second
-  savePath: string;                // Save directory
-  createdAt: string;               // ISO 8601 timestamp
-  completedAt: string | null;      // ISO 8601 timestamp
-  errorMessage: string | null;     // Error description
-  connections: number;             // Active connections
-  seeders: number;                 // Connected seeders (torrents)
-  selectedFiles: number[] | null;  // Selected file indices (torrents)
-}
-
-interface AppDownloadState {
-  state: 'queued' | 'downloading' | 'stalled' | 'paused' | 'completed' | 'error' | 'retrying';
-  kind?: ErrorKind;
-  message?: string;
-  attempt?: number;
-  maxAttempts?: number;
-}
-
-type ErrorKind = 'network_error' | 'file_error' | 'not_found' | 'timeout'
-              | 'auth_required' | 'already_exists' | 'resume_not_supported' | 'unknown';
-```
-
-### GlobalStats
-
-```typescript
-interface GlobalStats {
-  downloadSpeed: number;           // Total download speed (bytes/sec)
-  uploadSpeed: number;             // Total upload speed (bytes/sec)
-  numActive: number;               // Active download count
-  numWaiting: number;              // Queued download count
-  numStopped: number;              // Stopped download count
+```rust
+pub struct Download {
+    pub id: i64,                                // Database ID
+    pub gid: String,                            // Engine GID (unique identifier)
+    pub name: String,                           // Display name
+    pub url: Option<String>,                    // Source URL (HTTP downloads)
+    pub magnet_uri: Option<String>,             // Magnet link (torrents)
+    pub info_hash: Option<String>,              // BitTorrent info hash
+    pub download_type: DownloadType,            // Http | Torrent | Magnet
+    pub status: DownloadState,                  // Active | Waiting | Paused | Complete | Error | Removed
+    pub total_size: u64,                        // Total bytes
+    pub completed_size: u64,                    // Downloaded bytes
+    pub download_speed: u64,                    // Bytes per second
+    pub upload_speed: u64,                      // Bytes per second
+    pub save_path: String,                      // Save directory
+    pub created_at: String,                     // ISO 8601 timestamp
+    pub completed_at: Option<String>,           // ISO 8601 timestamp
+    pub error_message: Option<String>,          // Error description
+    pub connections: u32,                       // Active connections
+    pub seeders: u32,                           // Connected seeders (torrents)
+    pub selected_files: Option<Vec<usize>>,     // Selected file indices (torrents)
 }
 ```
 
-Note: The Rust backend also includes `numStoppedTotal` (total stopped count across all time), but the frontend type does not currently use it.
+### DownloadType
+
+```rust
+pub enum DownloadType {
+    Http,
+    Torrent,
+    Magnet,
+}
+```
+
+### DownloadState
+
+```rust
+pub enum DownloadState {
+    Active,
+    Waiting,
+    Paused,
+    Complete,
+    Error,
+    Removed,
+}
+```
+
+Implements `From<&str>` for parsing and `Display` for serialization. Unknown strings default to `Waiting`.
+
+### GlobalStat
+
+```rust
+pub struct GlobalStat {
+    pub download_speed: u64,                    // Total download speed (bytes/sec)
+    pub upload_speed: u64,                      // Total upload speed (bytes/sec)
+    pub num_active: u32,                        // Active download count
+    pub num_waiting: u32,                       // Queued download count
+    pub num_stopped: u32,                       // Stopped download count
+    pub num_stopped_total: u32,                 // Total stopped count (all time)
+}
+```
 
 ### TorrentInfo
 
-```typescript
-interface TorrentInfo {
-  name: string;
-  infoHash: string;
-  totalSize: number;
-  files: TorrentFile[];
-  comment: string | null;
-  creationDate: number | null;     // Unix timestamp
-  announceList: string[];          // Tracker URLs
-}
+Returned by `parse_torrent_file`.
 
-interface TorrentFile {
-  index: number;
-  path: string;
-  length: number;                  // File size in bytes
-  selected: boolean;
+```rust
+pub struct TorrentInfo {
+    pub name: String,
+    pub info_hash: String,
+    pub total_size: u64,
+    pub files: Vec<TorrentFile>,
+    pub comment: Option<String>,
+    pub creation_date: Option<i64>,             // Unix timestamp
+    pub announce_list: Vec<String>,             // Tracker URLs
+}
+```
+
+### TorrentFile
+
+```rust
+pub struct TorrentFile {
+    pub index: usize,
+    pub path: String,
+    pub length: u64,                            // File size in bytes
 }
 ```
 
 ### MagnetInfo
 
-```typescript
-interface MagnetInfo {
-  name: string | null;
-  infoHash: string;
-  trackers: string[];
+Returned by `parse_magnet_uri`.
+
+```rust
+pub struct MagnetInfo {
+    pub name: Option<String>,
+    pub info_hash: String,
+    pub trackers: Vec<String>,
+}
+```
+
+### DownloadFile
+
+Returned by `get_torrent_files`. Uses string representations for numeric fields.
+
+```rust
+pub struct DownloadFile {
+    pub index: String,
+    pub path: String,
+    pub length: String,
+    pub completed_length: String,
+    pub selected: String,                       // "true" or "false"
+    pub uris: Vec<FileUri>,
+}
+```
+
+### FileUri
+
+```rust
+pub struct FileUri {
+    pub uri: String,
+    pub status: String,
 }
 ```
 
 ### Settings
 
-The settings object uses snake_case keys (matching the database column naming convention).
+Defined in `crates/engine/src/db/mod.rs`.
 
-```typescript
-interface Settings {
-  download_path: string;            // Default save directory
-  max_concurrent_downloads: number; // 1-20, default 5
-  max_connections_per_server: number; // 1-16, default 8
-  split_count: number;              // Segments per download, default 8
-  download_speed_limit: number;     // Global download limit, 0 = unlimited
-  upload_speed_limit: number;       // Global upload limit, 0 = unlimited
-  user_agent: string;               // HTTP user agent
-  enable_notifications: boolean;    // Show completion notifications
-  close_to_tray: boolean;          // Minimize to tray on close
-  theme: string;                    // 'dark' | 'light' | 'system'
-  bt_enable_dht: boolean;          // BitTorrent DHT
-  bt_enable_pex: boolean;          // BitTorrent Peer Exchange
-  bt_enable_lpd: boolean;          // Local Peer Discovery
-  bt_max_peers: number;            // Max peers per torrent, default 55
-  bt_seed_ratio: number;           // Seed ratio, default 1.0
-  auto_update_trackers: boolean;   // Auto-fetch tracker lists
-  delete_files_on_remove: boolean; // Delete files when removing download
-  proxy_url: string;               // HTTP/SOCKS proxy URL (empty = none)
-  connect_timeout: number;         // Connection timeout in seconds, default 30
-  read_timeout: number;            // Read timeout in seconds, default 60
-  max_retries: number;             // Max retry attempts, default 3
-  allocation_mode: string;         // 'none' | 'sparse' | 'full', default 'sparse'
+```rust
+pub struct Settings {
+    pub download_path: String,                  // Default save directory
+    pub max_concurrent_downloads: u32,          // 1-20, default 5
+    pub max_connections_per_server: u32,        // 1-16, default 8
+    pub split_count: u32,                       // Segments per download, default 8
+    pub download_speed_limit: u64,              // Global download limit, 0 = unlimited
+    pub upload_speed_limit: u64,                // Global upload limit, 0 = unlimited
+    pub user_agent: String,                     // HTTP user agent
+    pub enable_notifications: bool,             // Show completion notifications
+    pub close_to_tray: bool,                    // Minimize to tray on close
+    pub theme: String,                          // "dark" | "light" | "system"
+    pub bt_enable_dht: bool,                    // BitTorrent DHT
+    pub bt_enable_pex: bool,                    // BitTorrent Peer Exchange
+    pub bt_enable_lpd: bool,                    // Local Peer Discovery
+    pub bt_max_peers: u32,                      // Max peers per torrent, default 55
+    pub bt_seed_ratio: f64,                     // Seed ratio, default 1.0
+    pub auto_update_trackers: bool,             // Auto-fetch tracker lists
+    pub delete_files_on_remove: bool,           // Delete files when removing download
+    pub proxy_url: String,                      // HTTP/SOCKS proxy URL (empty = none)
+    pub connect_timeout: u64,                   // Connection timeout in seconds, default 30
+    pub read_timeout: u64,                      // Read timeout in seconds, default 60
+    pub max_retries: u32,                       // Max retry attempts, default 3
+    pub allocation_mode: String,                // "none" | "sparse" | "full", default "sparse"
 }
 ```
+
+---
+
+## Error Type
+
+Defined in `crates/engine/src/error.rs`.
+
+```rust
+pub enum Error {
+    Engine(String),           // code -1: gosh-dl engine error
+    EngineNotInitialized,     // code -2: engine not yet initialized
+    Database(String),         // code -3: database error
+    Io(std::io::Error),       // code -4: IO error
+    Serialization(serde_json::Error), // code -5: JSON serialization error
+    Rusqlite(rusqlite::Error), // code -6: SQLite error
+    InvalidInput(String),     // code -7: input validation failure
+    NotFound(String),         // code -8: resource not found
+    Network(String),          // code -9: network error
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+```
+
+The `Error` type implements `Display`, `std::error::Error` (via `thiserror`), `Serialize`, and `From<gosh_dl::EngineError>`.
+
+---
+
+## Engine Events
+
+The engine emits events through gosh-dl's broadcast channel. These are forwarded to the GTK UI by the `EngineBridge`. Event names:
+
+| Event | Description |
+|-------|-------------|
+| `download:added` | A new download was added |
+| `download:started` | Download started actively transferring |
+| `download:progress` | Progress update (size, speed) |
+| `download:state-changed` | Generic state transition |
+| `download:completed` | Download finished successfully |
+| `download:failed` | Download encountered an error |
+| `download:removed` | Download was removed |
+| `download:paused` | Download was paused |
+| `download:resumed` | Download was resumed |
+
+Global stats are emitted separately every second as `EngineEvent::GlobalStats(GlobalStat)`.

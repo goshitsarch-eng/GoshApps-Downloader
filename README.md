@@ -1,6 +1,6 @@
 # Gosh-Fetch
 
-A cross-platform download manager for Linux, Windows, and macOS. Built with Electron, React, and a native Rust download engine.
+A native GTK4 download manager for Linux, built with Rust and powered by gosh-dl.
 
 ## Screenshots
 
@@ -9,9 +9,11 @@ A cross-platform download manager for Linux, Windows, and macOS. Built with Elec
 ![Screenshot 3](screenshots/img3.png)
 ![Screenshot 4](screenshots/img4.png)
 
+> Screenshots may not reflect the current GTK4 UI. Updated screenshots are coming.
+
 ## Features
 
-Gosh-Fetch handles HTTP/HTTPS and BitTorrent downloads through gosh-dl, a native Rust engine built specifically for this project. It supports magnet links, multi-segment parallel downloads, and runs on all three major desktop platforms with dark and light themes.
+Gosh-Fetch handles HTTP/HTTPS and BitTorrent downloads through gosh-dl, a native Rust engine built specifically for this project. It supports magnet links, multi-segment parallel downloads, and uses GTK4 with libadwaita for a modern GNOME-native interface with dark and light themes.
 
 There are no accounts, no telemetry, and no cloud features. Everything stays on your machine.
 
@@ -41,15 +43,13 @@ Full BitTorrent protocol support including torrent files and magnet links, DHT, 
 
 ### Desktop Integration
 
-- System tray with live download/upload speed display and a popup showing active downloads
+- System tray with live download/upload speed display
 - Minimize to tray on close
-- Window size, position, and maximized state persistence
 - `.torrent` file association and `magnet:` protocol handler
 - Drag and drop URLs, magnet links, or `.torrent` files onto the window
 - Desktop notifications on download completion
 - Keyboard shortcuts: `Ctrl+N` (add download), `Ctrl+K` (focus search), `Ctrl+,` (settings), `Ctrl+A` (select all)
 - First-run onboarding with download path setup and system integration options
-- Run at startup option
 - Bandwidth scheduling with time-based rules
 
 ### Pages
@@ -67,7 +67,7 @@ Gosh-Fetch uses [gosh-dl](https://github.com/goshitsarch-eng/gosh-dl), a native 
 | Single binary distribution | Yes | No |
 | Integrated error handling | Yes | Limited |
 
-gosh-dl provides HTTP/HTTPS segmented downloads with automatic resume, full BitTorrent protocol support with DHT/PEX/LPD, async I/O built on Tokio, real-time progress events pushed to the frontend, a priority queue, bandwidth scheduling, mirror/failover management, and checksum verification.
+gosh-dl provides HTTP/HTTPS segmented downloads with automatic resume, full BitTorrent protocol support with DHT/PEX/LPD, async I/O built on Tokio, real-time progress events pushed to the UI, a priority queue, bandwidth scheduling, mirror/failover management, and checksum verification.
 
 gosh-dl is licensed under MIT. See the [gosh-dl repository](https://github.com/goshitsarch-eng/gosh-dl) for details.
 
@@ -75,22 +75,22 @@ gosh-dl is licensed under MIT. See the [gosh-dl repository](https://github.com/g
 
 ```
 +----------------------------------+
-|  React 19 + Redux Toolkit (UI)   |
-|  Vite dev server / built bundle  |
+|  GTK4 + libadwaita (UI)         |
+|  GObject subclasses, CSS        |
 +----------------------------------+
-|  Electron Main Process           |
-|  IPC bridge, tray, auto-update   |
+|  EngineBridge                    |
+|  mpsc channels, async-channel   |
 +----------------------------------+
-|  gosh-fetch-engine (Rust)        |
-|  JSON-RPC over stdin/stdout      |
-|  SQLite for settings & history   |
+|  gosh-fetch-engine (Rust lib)   |
+|  Direct Rust API, AppState      |
+|  SQLite (rusqlite)              |
 +----------------------------------+
-|  gosh-dl (Rust download engine)  |
-|  HTTP, BitTorrent, async I/O     |
+|  gosh-dl (download engine)      |
+|  HTTP, BitTorrent, async I/O    |
 +----------------------------------+
 ```
 
-The Rust sidecar (`gosh-fetch-engine`) runs as a child process managed by Electron. The main process communicates with it via JSON-RPC over stdin/stdout. The frontend receives real-time push events for download state changes (added, completed, failed, paused, resumed, etc.), with a 5-second heartbeat poll as fallback.
+The application is a single Rust binary. The GTK4 UI runs on the main thread (glib main loop). A dedicated background thread runs a Tokio runtime that hosts the download engine. The two sides communicate through `mpsc` channels: commands flow from the GTK thread to the engine, and events flow back via `async-channel` into the glib main loop. There is no IPC, no child process, and no JSON-RPC -- everything is direct Rust API calls within the same process.
 
 For more detail, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -98,14 +98,13 @@ For more detail, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 19, Redux Toolkit, React Router 7, TypeScript |
-| Build | Vite 7, electron-builder |
-| Desktop | Electron 40 |
-| Backend | Rust (Tokio, rusqlite, serde) |
-| Engine | gosh-dl 0.3.2 |
-| Icons | Material Symbols Outlined (self-hosted), lucide-react (legacy) |
-| Drag & Drop | dnd-kit |
-| Testing | Vitest, React Testing Library, Rust `#[test]` |
+| UI | GTK4 0.9, libadwaita 0.7 |
+| Toolkit bindings | gtk4-rs, glib, gio, gdk4, cairo-rs |
+| Async bridge | async-channel, tokio mpsc |
+| Engine | gosh-fetch-engine (gosh-dl 0.3.2) |
+| Database | SQLite (rusqlite, bundled) |
+| Serialization | serde, serde_json |
+| Build | Cargo (Rust 2021 edition) |
 
 ## Installation
 
@@ -115,63 +114,69 @@ For more detail, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 yay -S gosh-fetch-bin
 ```
 
-Available as [`gosh-fetch-bin`](https://aur.archlinux.org/packages/gosh-fetch-bin) on the AUR. Installs the prebuilt AppImage with a desktop entry, icons, `.torrent` file association, and `magnet:` URI handler.
+Available as [`gosh-fetch-bin`](https://aur.archlinux.org/packages/gosh-fetch-bin) on the AUR. Installs the prebuilt binary with a desktop entry, icons, `.torrent` file association, and `magnet:` URI handler.
 
-### Other Linux / Windows / macOS
+### Other Linux Distributions
 
 Download the latest release from the [Releases](https://github.com/goshitsarch-eng/Gosh-Fetch/releases) page.
 
-| Platform | Formats |
-|----------|---------|
-| Linux | AppImage, .deb, .rpm |
-| macOS | .dmg |
-| Windows | NSIS installer, portable |
-
 ## Building from Source
 
-### Requirements
+### Prerequisites
 
-### All Platforms
-
-- [Node.js](https://nodejs.org/) 20+
 - [Rust](https://rustup.rs/) 1.77+
+- GTK4 development libraries (4.12+)
+- libadwaita development libraries (1.5+)
+- SQLite development libraries (bundled by default via rusqlite, so usually not needed)
+- A C compiler (gcc or clang) for native dependencies
 
-### Linux
+### Linux Dependencies
 
-No additional system dependencies required beyond Node.js and Rust.
-
-### macOS
-
-- Xcode Command Line Tools
-
-### Windows
-
-- No additional dependencies
-
-## Building
+**Debian/Ubuntu:**
 
 ```bash
-# Install dependencies
-npm install
+sudo apt install libgtk-4-dev libadwaita-1-dev build-essential
+```
 
-# Build the Rust engine
-cargo build --release --manifest-path src-rust/Cargo.toml
+**Fedora:**
 
-# Development (frontend + Electron)
-npm run dev                # Vite dev server on port 5173
-npm run build:electron     # Compile Electron main process
-npx electron .             # Launch the app
+```bash
+sudo dnf install gtk4-devel libadwaita-devel gcc
+```
 
-# Or use the combined dev command
-npm run electron:dev
+**Arch Linux:**
 
-# Production build
-npm run electron:build
+```bash
+sudo pacman -S gtk4 libadwaita base-devel
+```
+
+### Building
+
+```bash
+# Clone the repository
+git clone https://github.com/goshitsarch-eng/Gosh-Fetch.git
+cd Gosh-Fetch
+
+# Debug build
+cargo build
+
+# Release build (optimized, stripped)
+cargo build --release
+
+# Run the application
+cargo run --release
 
 # Run tests
-npm test                   # Frontend tests (Vitest)
-cargo test --manifest-path src-rust/Cargo.toml  # Rust tests
+cargo test --workspace
+
+# Run clippy linter
+cargo clippy --workspace
+
+# Format code
+cargo fmt --all
 ```
+
+The release binary will be at `target/release/gosh-fetch`.
 
 ## Usage
 

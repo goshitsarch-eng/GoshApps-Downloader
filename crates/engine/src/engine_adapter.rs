@@ -327,18 +327,19 @@ fn convert_options(opts: FrontendOptions) -> DownloadOptions {
     }
 }
 
-/// Parse a speed string like "1M" or "500K" to bytes/sec
+/// Parse a speed string like "1M" or "500K" to bytes/sec.
+/// Uses checked arithmetic to prevent overflow.
 fn parse_speed(s: &str) -> Option<u64> {
     let s = s.trim().to_uppercase();
+    if s.len() <= 1 {
+        return s.parse().ok();
+    }
     if s.ends_with('K') {
-        s[..s.len() - 1].parse::<u64>().ok().map(|n| n * 1024)
+        s[..s.len() - 1].parse::<u64>().ok().and_then(|n| n.checked_mul(1024))
     } else if s.ends_with('M') {
-        s[..s.len() - 1].parse::<u64>().ok().map(|n| n * 1024 * 1024)
+        s[..s.len() - 1].parse::<u64>().ok().and_then(|n| n.checked_mul(1024 * 1024))
     } else if s.ends_with('G') {
-        s[..s.len() - 1]
-            .parse::<u64>()
-            .ok()
-            .map(|n| n * 1024 * 1024 * 1024)
+        s[..s.len() - 1].parse::<u64>().ok().and_then(|n| n.checked_mul(1024 * 1024 * 1024))
     } else {
         s.parse().ok()
     }
